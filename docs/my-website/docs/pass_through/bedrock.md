@@ -1,6 +1,13 @@
-# Bedrock SDK
+# Bedrock (boto3) SDK
 
 Pass-through endpoints for Bedrock - call provider-specific endpoint, in native format (no translation).
+
+| Feature | Supported | Notes | 
+|-------|-------|-------|
+| Cost Tracking | ✅ | For `/invoke` and `/converse` endpoints |
+| Logging | ✅ | works across all integrations |
+| End-user Tracking | ❌ | [Tell us if you need this](https://github.com/BerriAI/litellm/issues/new) |
+| Streaming | ✅ | |
 
 Just replace `https://bedrock-runtime.{aws_region_name}.amazonaws.com` with `LITELLM_PROXY_BASE_URL/bedrock` 🚀
 
@@ -26,7 +33,7 @@ Supports **ALL** Bedrock Endpoints (including streaming).
 
 Let's call the Bedrock [`/converse` endpoint](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
 
-1. Add AWS Keyss to your environment 
+1. Add AWS Keys to your environment 
 
 ```bash
 export AWS_ACCESS_KEY_ID=""  # Access key
@@ -157,7 +164,7 @@ curl -X POST "http://0.0.0.0:4000/bedrock/knowledgebases/{knowledgeBaseId}/retri
 #### Direct Bedrock API Call 
 
 ```bash
-curl -X POST "https://bedrock-runtime.us-west-2.amazonaws.com/knowledgebases/{knowledgeBaseId}/retrieve" \
+curl -X POST "https://bedrock-agent-runtime.us-west-2.amazonaws.com/knowledgebases/{knowledgeBaseId}/retrieve" \
 -H 'Authorization: AWS4-HMAC-SHA256..' \
 -H 'Content-Type: application/json' \
 -d '{
@@ -250,7 +257,7 @@ proxy_endpoint = "http://0.0.0.0:4000/bedrock" # 👈 your proxy base url
 # # Create a Config object with the proxy
 # Custom headers
 custom_headers = {
-    'litellm_user_api_key': 'sk-1234', # 👈 your proxy api key
+    'litellm_user_api_key': 'Bearer sk-1234', # 👈 your proxy api key
 }
 
 
@@ -267,9 +274,7 @@ runtime_client = boto3.client(
 
 # Custom header injection
 def inject_custom_headers(request, **kwargs):
-    request.headers.update({
-        'litellm_user_api_key': 'sk-1234',
-    })
+    request.headers.update(custom_headers)
 
 # Attach the event to inject custom headers before the request is sent
 runtime_client.meta.events.register('before-send.*.*', inject_custom_headers)

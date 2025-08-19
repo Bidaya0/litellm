@@ -1,19 +1,19 @@
+import os
 import re
 import sys
-import traceback
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from fastapi import HTTPException, Request, status
 
 from litellm import Router, provider_list
 from litellm._logging import verbose_proxy_logger
 from litellm.proxy._types import *
+from litellm.types.router import CONFIGURABLE_CLIENTSIDE_AUTH_PARAMS
 
 
 def _get_request_ip_address(
     request: Request, use_x_forwarded_for: Optional[bool] = False
 ) -> Optional[str]:
-
     client_ip = None
     if use_x_forwarded_for is True and "x-forwarded-for" in request.headers:
         client_ip = request.headers["x-forwarded-for"]
@@ -73,8 +73,41 @@ def check_complete_credentials(request_body: dict) -> bool:
     return False
 
 
+def check_regex_or_str_match(request_body_value: Any, regex_str: str) -> bool:
+    """
+    Check if request_body_value matches the regex_str or is equal to param
+    """
+    if re.match(regex_str, request_body_value) or regex_str == request_body_value:
+        return True
+    return False
+
+
+def _is_param_allowed(
+    param: str,
+    request_body_value: Any,
+    configurable_clientside_auth_params: CONFIGURABLE_CLIENTSIDE_AUTH_PARAMS,
+) -> bool:
+    """
+    Check if param is a str or dict and if request_body_value is in the list of allowed values
+    """
+    if configurable_clientside_auth_params is None:
+        return False
+
+    for item in configurable_clientside_auth_params:
+        if isinstance(item, str) and param == item:
+            return True
+        elif isinstance(item, Dict):
+            if param == "api_base" and check_regex_or_str_match(
+                request_body_value=request_body_value,
+                regex_str=item["api_base"],
+            ):  # assume param is a regex
+                return True
+
+    return False
+
+
 def _allow_model_level_clientside_configurable_parameters(
-    model: str, param: str, llm_router: Optional[Router]
+    model: str, param: str, request_body_value: Any, llm_router: Optional[Router]
 ) -> bool:
     """
     Check if model is allowed to use configurable client-side params
@@ -99,10 +132,11 @@ def _allow_model_level_clientside_configurable_parameters(
     if model_info is None or model_info.configurable_clientside_auth_params is None:
         return False
 
-    if param in model_info.configurable_clientside_auth_params:
-        return True
-
-    return False
+    return _is_param_allowed(
+        param=param,
+        request_body_value=request_body_value,
+        configurable_clientside_auth_params=model_info.configurable_clientside_auth_params,
+    )
 
 
 def is_request_body_safe(
@@ -127,7 +161,10 @@ def is_request_body_safe(
                 return True
             elif (
                 _allow_model_level_clientside_configurable_parameters(
-                    model=model, param=param, llm_router=llm_router
+                    model=model,
+                    param=param,
+                    request_body_value=request_body[param],
+                    llm_router=llm_router,
                 )
                 is True
             ):
@@ -225,7 +262,6 @@ def route_in_additonal_public_routes(current_route: str):
     """
 
     # check if user is premium_user - if not do nothing
-    from litellm.proxy._types import LiteLLMRoutes
     from litellm.proxy.proxy_server import general_settings, premium_user
 
     try:
@@ -284,6 +320,7 @@ async def check_if_request_size_is_safe(request: Request) -> bool:
     from litellm.proxy.proxy_server import general_settings, premium_user
 
     max_request_size_mb = general_settings.get("max_request_size_mb", None)
+
     if max_request_size_mb is not None:
         # Check if premium user
         if premium_user is not True:
@@ -377,18 +414,31 @@ def bytes_to_mb(bytes_value: int):
 
 
 # helpers used by parallel request limiter to handle model rpm/tpm limits for a given api key
-def get_key_model_rpm_limit(user_api_key_dict: UserAPIKeyAuth) -> Optional[dict]:
+def get_key_model_rpm_limit(
+    user_api_key_dict: UserAPIKeyAuth,
+) -> Optional[Dict[str, int]]:
     if user_api_key_dict.metadata:
         if "model_rpm_limit" in user_api_key_dict.metadata:
             return user_api_key_dict.metadata["model_rpm_limit"]
+    elif user_api_key_dict.model_max_budget:
+        model_rpm_limit: Dict[str, Any] = {}
+        for model, budget in user_api_key_dict.model_max_budget.items():
+            if "rpm_limit" in budget and budget["rpm_limit"] is not None:
+                model_rpm_limit[model] = budget["rpm_limit"]
+        return model_rpm_limit
 
     return None
 
 
-def get_key_model_tpm_limit(user_api_key_dict: UserAPIKeyAuth) -> Optional[dict]:
+def get_key_model_tpm_limit(
+    user_api_key_dict: UserAPIKeyAuth,
+) -> Optional[Dict[str, int]]:
     if user_api_key_dict.metadata:
         if "model_tpm_limit" in user_api_key_dict.metadata:
             return user_api_key_dict.metadata["model_tpm_limit"]
+    elif user_api_key_dict.model_max_budget:
+        if "tpm_limit" in user_api_key_dict.model_max_budget:
+            return user_api_key_dict.model_max_budget["tpm_limit"]
 
     return None
 
@@ -406,44 +456,90 @@ def is_pass_through_provider_route(route: str) -> bool:
     return False
 
 
-def should_run_auth_on_pass_through_provider_route(route: str) -> bool:
-    """
-    Use this to decide if the rest of the LiteLLM Virtual Key auth checks should run on /vertex-ai/{endpoint} routes
-    Use this to decide if the rest of the LiteLLM Virtual Key auth checks should run on provider pass through routes
-    ex /vertex-ai/{endpoint} routes
-    Run virtual key auth if the following is try:
-    - User is premium_user
-    - User has enabled litellm_setting.use_client_credentials_pass_through_routes
-    """
-    from litellm.proxy.proxy_server import general_settings, premium_user
-
-    if premium_user is not True:
-        return False
-
-    # premium use has opted into using client credentials
-    if (
-        general_settings.get("use_client_credentials_pass_through_routes", False)
-        is True
-    ):
-        return False
-
-    # only enabled for LiteLLM Enterprise
-    return True
-
-
 def _has_user_setup_sso():
     """
-    Check if the user has set up single sign-on (SSO) by verifying the presence of Microsoft client ID, Google client ID, and UI username environment variables.
+    Check if the user has set up single sign-on (SSO) by verifying the presence of Microsoft client ID, Google client ID or generic client ID and UI username environment variables.
     Returns a boolean indicating whether SSO has been set up.
     """
     microsoft_client_id = os.getenv("MICROSOFT_CLIENT_ID", None)
     google_client_id = os.getenv("GOOGLE_CLIENT_ID", None)
-    ui_username = os.getenv("UI_USERNAME", None)
+    generic_client_id = os.getenv("GENERIC_CLIENT_ID", None)
 
     sso_setup = (
         (microsoft_client_id is not None)
         or (google_client_id is not None)
-        or (ui_username is not None)
+        or (generic_client_id is not None)
     )
 
     return sso_setup
+
+
+def get_end_user_id_from_request_body(
+    request_body: dict, request_headers: Optional[dict] = None
+) -> Optional[str]:
+    # Import general_settings here to avoid potential circular import issues at module level
+    # and to ensure it's fetched at runtime.
+    from litellm.proxy.proxy_server import general_settings
+
+    # Check 1: Custom Header from general_settings.user_header_name (only if request_headers is provided)
+    # User query: "system not respecting user_header_name property"
+    # This implies the key in general_settings is 'user_header_name'.
+    if request_headers is not None:
+        user_id_header_config_key = "user_header_name"
+
+        custom_header_name_to_check = general_settings.get(user_id_header_config_key)
+
+        if custom_header_name_to_check and isinstance(custom_header_name_to_check, str):
+            for header_name, header_value in request_headers.items():
+                if header_name.lower() == custom_header_name_to_check.lower():
+                    user_id_from_header = header_value
+                    if user_id_from_header.strip():
+                        return str(user_id_from_header)
+
+    # Check 2: 'user' field in request_body (commonly OpenAI)
+    if "user" in request_body and request_body["user"] is not None:
+        user_from_body_user_field = request_body["user"]
+        return str(user_from_body_user_field)
+
+    # Check 3: 'litellm_metadata.user' in request_body (commonly Anthropic)
+    litellm_metadata = request_body.get("litellm_metadata")
+    if isinstance(litellm_metadata, dict):
+        user_from_litellm_metadata = litellm_metadata.get("user")
+        if user_from_litellm_metadata is not None:
+            return str(user_from_litellm_metadata)
+
+    # Check 4: 'metadata.user_id' in request_body (another common pattern)
+    metadata_dict = request_body.get("metadata")
+    if isinstance(metadata_dict, dict):
+        user_id_from_metadata_field = metadata_dict.get("user_id")
+        if user_id_from_metadata_field is not None:
+            return str(user_id_from_metadata_field)
+
+    return None
+
+
+def get_model_from_request(
+    request_data: dict, route: str
+) -> Optional[Union[str, List[str]]]:
+    # First try to get model from request_data
+    model = request_data.get("model") or request_data.get("target_model_names")
+
+    if model is not None:
+        model_names = model.split(",")
+        if len(model_names) == 1:
+            model = model_names[0].strip()
+        else:
+            model = [m.strip() for m in model_names]
+
+    # If model not in request_data, try to extract from route
+    if model is None:
+        # Parse model from route that follows the pattern /openai/deployments/{model}/*
+        match = re.match(r"/openai/deployments/([^/]+)", route)
+        if match:
+            model = match.group(1)
+
+    return model
+
+
+def abbreviate_api_key(api_key: str) -> str:
+    return f"sk-...{api_key[-4:]}"

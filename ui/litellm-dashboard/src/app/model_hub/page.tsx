@@ -2,10 +2,10 @@
 import React, { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { modelHubCall } from "@/components/networking";
-import ModelHub from "@/components/model_hub";
+import PublicModelHubPage from "@/components/public_model_hub";
 
 export default function PublicModelHub() {
-  const searchParams = useSearchParams();
+  const searchParams = useSearchParams()!;
   const key = searchParams.get("key");
   const [accessToken, setAccessToken] = useState<string | null>(null);
 
@@ -20,6 +20,6 @@ export default function PublicModelHub() {
    *
    */
   return (
-    <ModelHub accessToken={accessToken} publicPage={true} premiumUser={false} />
+    <PublicModelHubPage accessToken={accessToken} />
   );
 }

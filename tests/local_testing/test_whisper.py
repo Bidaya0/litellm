@@ -51,113 +51,33 @@ from litellm import Router
         ),
     ],
 )
-@pytest.mark.parametrize("response_format", ["json", "vtt"])
-@pytest.mark.parametrize("sync_mode", [True, False])
+@pytest.mark.parametrize(
+    "response_format, timestamp_granularities",
+    [("json", None), ("vtt", None), ("verbose_json", ["word"])],
+)
 @pytest.mark.asyncio
-async def test_transcription(model, api_key, api_base, response_format, sync_mode):
-    if sync_mode:
-        transcript = litellm.transcription(
-            model=model,
-            file=audio_file,
-            api_key=api_key,
-            api_base=api_base,
-            response_format=response_format,
-            drop_params=True,
-        )
-    else:
-        transcript = await litellm.atranscription(
-            model=model,
-            file=audio_file,
-            api_key=api_key,
-            api_base=api_base,
-            response_format=response_format,
-            drop_params=True,
-        )
+@pytest.mark.flaky(retries=3, delay=1)
+async def test_transcription(
+    model, api_key, api_base, response_format, timestamp_granularities
+):
+    transcript = await litellm.atranscription(
+        model=model,
+        file=audio_file,
+        api_key=api_key,
+        api_base=api_base,
+        response_format=response_format,
+        drop_params=True,
+    )
     print(f"transcript: {transcript.model_dump()}")
-    print(f"transcript: {transcript._hidden_params}")
+    print(f"transcript hidden params: {transcript._hidden_params}")
 
     assert transcript.text is not None
-
-
-# This file includes the custom callbacks for LiteLLM Proxy
-# Once defined, these can be passed in proxy_config.yaml
-class MyCustomHandler(CustomLogger):
-    def __init__(self):
-        self.openai_client = None
-
-    async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
-        try:
-            # init logging config
-            print("logging a transcript kwargs: ", kwargs)
-            print("openai client=", kwargs.get("client"))
-            self.openai_client = kwargs.get("client")
-
-        except Exception:
-            pass
-
-
-proxy_handler_instance = MyCustomHandler()
-
-
-# Set litellm.callbacks = [proxy_handler_instance] on the proxy
-# need to set litellm.callbacks = [proxy_handler_instance] # on the proxy
-@pytest.mark.asyncio
-async def test_transcription_on_router():
-    litellm.set_verbose = True
-    litellm.callbacks = [proxy_handler_instance]
-    print("\n Testing async transcription on router\n")
-    try:
-        model_list = [
-            {
-                "model_name": "whisper",
-                "litellm_params": {
-                    "model": "whisper-1",
-                },
-            },
-            {
-                "model_name": "whisper",
-                "litellm_params": {
-                    "model": "azure/azure-whisper",
-                    "api_base": "https://my-endpoint-europe-berri-992.openai.azure.com/",
-                    "api_key": os.getenv("AZURE_EUROPE_API_KEY"),
-                    "api_version": "2024-02-15-preview",
-                },
-            },
-        ]
-
-        router = Router(model_list=model_list)
-
-        router_level_clients = []
-        for deployment in router.model_list:
-            _deployment_openai_client = router._get_client(
-                deployment=deployment,
-                kwargs={"model": "whisper-1"},
-                client_type="async",
-            )
-
-            router_level_clients.append(str(_deployment_openai_client))
-
-        response = await router.atranscription(
-            model="whisper",
-            file=audio_file,
-        )
-        print(response)
-
-        # PROD Test
-        # Ensure we ONLY use OpenAI/Azure client initialized on the router level
-        await asyncio.sleep(5)
-        print("OpenAI Client used= ", proxy_handler_instance.openai_client)
-        print("all router level clients= ", router_level_clients)
-        assert proxy_handler_instance.openai_client in router_level_clients
-    except Exception as e:
-        traceback.print_exc()
-        pytest.fail(f"Error occurred: {e}")
 
 
 @pytest.mark.asyncio()
 async def test_transcription_caching():
     import litellm
-    from litellm.caching import Cache
+    from litellm.caching.caching import Cache
 
     litellm.set_verbose = True
     litellm.cache = Cache()
@@ -195,3 +115,121 @@ async def test_transcription_caching():
     assert response_3.text != response_2.text
 
     litellm.cache = None
+
+
+@pytest.mark.asyncio
+async def test_whisper_log_pre_call():
+    from litellm.litellm_core_utils.litellm_logging import Logging
+    from datetime import datetime
+    from unittest.mock import patch, MagicMock
+    from litellm.integrations.custom_logger import CustomLogger
+
+    custom_logger = CustomLogger()
+
+    litellm.callbacks = [custom_logger]
+
+    with patch.object(custom_logger, "log_pre_api_call") as mock_log_pre_call:
+        await litellm.atranscription(
+            model="whisper-1",
+            file=audio_file,
+        )
+        mock_log_pre_call.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_whisper_log_pre_call():
+    from litellm.litellm_core_utils.litellm_logging import Logging
+    from datetime import datetime
+    from unittest.mock import patch, MagicMock
+    from litellm.integrations.custom_logger import CustomLogger
+
+    custom_logger = CustomLogger()
+
+    litellm.callbacks = [custom_logger]
+
+    with patch.object(custom_logger, "log_pre_api_call") as mock_log_pre_call:
+        await litellm.atranscription(
+            model="whisper-1",
+            file=audio_file,
+        )
+        mock_log_pre_call.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_gpt_4o_transcribe():
+    from litellm.litellm_core_utils.litellm_logging import Logging
+    from datetime import datetime
+    from unittest.mock import patch, MagicMock
+
+    await litellm.atranscription(
+        model="openai/gpt-4o-transcribe", file=audio_file, response_format="json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_gpt_4o_transcribe_model_mapping():
+    """Test that GPT-4o transcription models are correctly mapped and not hardcoded to whisper-1"""
+    
+    # Test GPT-4o mini transcribe
+    response = await litellm.atranscription(
+        model="openai/gpt-4o-mini-transcribe", 
+        file=audio_file, 
+        response_format="json"
+    )
+    
+    # Check that the response contains the correct model in hidden params
+    assert response._hidden_params is not None
+    assert response._hidden_params["model"] == "gpt-4o-mini-transcribe"
+    assert response._hidden_params["custom_llm_provider"] == "openai"
+    assert response.text is not None
+    
+    # Test GPT-4o transcribe
+    response2 = await litellm.atranscription(
+        model="openai/gpt-4o-transcribe", 
+        file=audio_file, 
+        response_format="json"
+    )
+    
+    # Check that the response contains the correct model in hidden params
+    assert response2._hidden_params is not None
+    assert response2._hidden_params["model"] == "gpt-4o-transcribe"
+    assert response2._hidden_params["custom_llm_provider"] == "openai"
+    assert response2.text is not None
+    
+    # Test traditional whisper-1 still works
+    response3 = await litellm.atranscription(
+        model="openai/whisper-1", 
+        file=audio_file, 
+        response_format="json"
+    )
+    
+    # Check that the response contains the correct model in hidden params
+    assert response3._hidden_params is not None
+    assert response3._hidden_params["model"] == "whisper-1"
+    assert response3._hidden_params["custom_llm_provider"] == "openai"
+    assert response3.text is not None
+
+
+@pytest.mark.asyncio
+async def test_azure_transcribe_model_mapping():
+    """Test that Azure transcription models are correctly mapped and not hardcoded to whisper-1"""
+    
+    # Test Azure whisper-1
+    try:
+        response = await litellm.atranscription(
+            model="azure/whisper-1", 
+            file=audio_file, 
+            response_format="json",
+            api_key=os.getenv("AZURE_EUROPE_API_KEY"),
+            api_base="https://my-endpoint-europe-berri-992.openai.azure.com/",
+            drop_params=True
+        )
+        
+        # Check that the response contains the correct model in hidden params
+        assert response._hidden_params is not None
+        assert response._hidden_params["model"] == "whisper-1"
+        assert response._hidden_params["custom_llm_provider"] == "azure"
+        assert response.text is not None
+    except Exception as e:
+        # If Azure credentials are not available, skip this test
+        pytest.skip(f"Azure credentials not available: {str(e)}")

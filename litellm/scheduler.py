@@ -1,20 +1,19 @@
-import heapq
-from pydantic import BaseModel
-from typing import Optional
 import enum
-from litellm.caching import DualCache, RedisCache
+import heapq
+from typing import Optional
+
+from pydantic import BaseModel
+
 from litellm import print_verbose
+from litellm.caching.caching import DualCache, RedisCache
+from litellm.constants import DEFAULT_IN_MEMORY_TTL, DEFAULT_POLLING_INTERVAL
 
 
 class SchedulerCacheKeys(enum.Enum):
     queue = "scheduler:queue"
-    default_in_memory_ttl = 5  # cache queue in-memory for 5s when redis cache available
-
-
-class DefaultPriorities(enum.Enum):
-    High = 0
-    Medium = 128
-    Low = 255
+    default_in_memory_ttl = (
+        DEFAULT_IN_MEMORY_TTL  # cache queue in-memory for 5s when redis cache available
+    )
 
 
 class FlowItem(BaseModel):
@@ -42,7 +41,9 @@ class Scheduler:
         self.cache = DualCache(
             redis_cache=redis_cache, default_in_memory_ttl=default_in_memory_ttl
         )
-        self.polling_interval = polling_interval or 0.03  # default to 3ms
+        self.polling_interval = (
+            polling_interval or DEFAULT_POLLING_INTERVAL
+        )  # default to 3ms
 
     async def add_request(self, request: FlowItem):
         # We use the priority directly, as lower values indicate higher priority

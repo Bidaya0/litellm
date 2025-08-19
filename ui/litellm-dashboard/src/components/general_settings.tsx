@@ -59,10 +59,11 @@ import {
   XCircleIcon,
   QuestionMarkCircleIcon,
 } from "@heroicons/react/outline";
-import StaticGenerationSearchParamsBailoutProvider from "next/dist/client/components/static-generation-searchparams-bailout-provider";
+
 import AddFallbacks from "./add_fallbacks";
 import openai from "openai";
 import Paragraph from "antd/es/skeleton/Paragraph";
+import NotificationManager from "./molecules/notifications_manager";
 interface GeneralSettingsPageProps {
   accessToken: string | null;
   userRole: string | null;
@@ -121,9 +122,8 @@ async function testFallbackModelResponse(
       </span>
     );
   } catch (error) {
-    message.error(
+    NotificationManager.fromBackend(
       `Error occurred while generating model response. Please try again. Error: ${error}`,
-      20
     );
   }
 }
@@ -287,25 +287,31 @@ const GeneralSettings: React.FC<GeneralSettingsPageProps> = ({
     console.log(`received key: ${key}`);
     console.log(`routerSettings['fallbacks']: ${routerSettings["fallbacks"]}`);
 
-    routerSettings["fallbacks"].map((dict: { [key: string]: any }) => {
-      // Check if the dictionary has the specified key and delete it if present
-      if (key in dict) {
-        delete dict[key];
-      }
-      return dict; // Return the updated dictionary
-    });
+    const updatedFallbacks = routerSettings["fallbacks"]
+        .map((dict: { [key: string]: any }) => {
+            if (key in dict) {
+                delete dict[key];
+            }
+            return dict;
+        })
+        .filter((dict: { [key: string]: any }) => Object.keys(dict).length > 0);
+      
+    const updatedSettings = {
+        ...routerSettings,
+        fallbacks: updatedFallbacks
+    };
+  
 
     const payload = {
-      router_settings: routerSettings,
+      router_settings: updatedSettings,
     };
 
     try {
       await setCallbacksCall(accessToken, payload);
-      setRouterSettings({ ...routerSettings });
-      setSelectedStrategy(routerSettings["routing_strategy"]);
+      setRouterSettings(updatedSettings);
       message.success("Router settings updated successfully");
     } catch (error) {
-      message.error("Failed to update router settings: " + error, 20);
+      NotificationManager.fromBackend("Failed to update router settings: " + error);
     }
   };
 
@@ -426,7 +432,7 @@ const GeneralSettings: React.FC<GeneralSettingsPageProps> = ({
     try {
       setCallbacksCall(accessToken, payload);
     } catch (error) {
-      message.error("Failed to update router settings: " + error, 20);
+      NotificationManager.fromBackend("Failed to update router settings: " + error);
     }
 
     message.success("router settings updated successfully");

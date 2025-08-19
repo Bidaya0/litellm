@@ -5,29 +5,21 @@
 # +-------------------------------------------------------------+
 #  Thank you users! We ❤️ you! - Krrish & Ishaan
 
-import sys, os
+import os
+import sys
 
 sys.path.insert(
     0, os.path.abspath("../..")
 )  # Adds the parent directory to the system path
-from typing import Optional, Literal, Union
-import litellm, traceback, sys, uuid
-from litellm.caching import DualCache
-from litellm.proxy._types import UserAPIKeyAuth
-from litellm.integrations.custom_logger import CustomLogger
-from fastapi import HTTPException
-from litellm._logging import verbose_proxy_logger
-from litellm.utils import (
-    ModelResponse,
-    EmbeddingResponse,
-    ImageResponse,
-    StreamingChoices,
-)
-from datetime import datetime
-import aiohttp, asyncio
-from litellm._logging import verbose_proxy_logger
+import sys
+from typing import Literal
 
-litellm.set_verbose = True
+from fastapi import HTTPException
+
+import litellm
+from litellm._logging import verbose_proxy_logger
+from litellm.integrations.custom_logger import CustomLogger
+from litellm.proxy._types import UserAPIKeyAuth
 
 
 class _ENTERPRISE_OpenAI_Moderation(CustomLogger):
@@ -39,7 +31,7 @@ class _ENTERPRISE_OpenAI_Moderation(CustomLogger):
 
     #### CALL HOOKS - proxy only ####
 
-    async def async_moderation_hook(  ### 👈 KEY CHANGE ###
+    async def async_moderation_hook(
         self,
         data: dict,
         user_api_key_dict: UserAPIKeyAuth,
@@ -49,10 +41,12 @@ class _ENTERPRISE_OpenAI_Moderation(CustomLogger):
             "image_generation",
             "moderation",
             "audio_transcription",
+            "responses",
+            "mcp_call",
         ],
     ):
+        text = ""
         if "messages" in data and isinstance(data["messages"], list):
-            text = ""
             for m in data["messages"]:  # assume messages is a list
                 if "content" in m and isinstance(m["content"], str):
                     text += m["content"]
@@ -67,7 +61,7 @@ class _ENTERPRISE_OpenAI_Moderation(CustomLogger):
         )
 
         verbose_proxy_logger.debug("Moderation response: %s", moderation_response)
-        if moderation_response.results[0].flagged == True:
+        if moderation_response.results[0].flagged is True:
             raise HTTPException(
                 status_code=403, detail={"error": "Violated content safety policy"}
             )

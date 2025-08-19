@@ -2,28 +2,26 @@
 Common utilities used across bedrock chat/embedding/image generation
 """
 
+import json
 import os
-import types
-from enum import Enum
-from typing import List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Union
 
 import httpx
 
 import litellm
+from litellm.llms.base_llm.anthropic_messages.transformation import (
+    BaseAnthropicMessagesConfig,
+)
+from litellm.llms.base_llm.base_utils import BaseLLMModelInfo
+from litellm.llms.base_llm.chat.transformation import BaseLLMException
 from litellm.secret_managers.main import get_secret
 
+if TYPE_CHECKING:
+    from litellm.types.llms.openai import AllMessageValues
 
-class BedrockError(Exception):
-    def __init__(self, status_code, message):
-        self.status_code = status_code
-        self.message = message
-        self.request = httpx.Request(
-            method="POST", url="https://us-west-2.console.aws.amazon.com/bedrock"
-        )
-        self.response = httpx.Response(status_code=status_code, request=self.request)
-        super().__init__(
-            self.message
-        )  # Call the base class constructor with the parameters it needs
+
+class BedrockError(BaseLLMException):
+    pass
 
 
 class AmazonBedrockGlobalConfig:
@@ -43,501 +41,62 @@ class AmazonBedrockGlobalConfig:
                 optional_params[mapped_params[param]] = value
         return optional_params
 
+    def get_all_regions(self) -> List[str]:
+        return (
+            self.get_us_regions()
+            + self.get_eu_regions()
+            + self.get_ap_regions()
+            + self.get_ca_regions()
+            + self.get_sa_regions()
+        )
+
+    def get_ap_regions(self) -> List[str]:
+        """
+        Source: https://www.aws-services.info/bedrock.html
+        """
+        return [
+            "ap-northeast-1",  # Asia Pacific (Tokyo)
+            "ap-northeast-2",  # Asia Pacific (Seoul)
+            "ap-northeast-3",  # Asia Pacific (Osaka)
+            "ap-south-1",  # Asia Pacific (Mumbai)
+            "ap-south-2",  # Asia Pacific (Hyderabad)
+            "ap-southeast-1",  # Asia Pacific (Singapore)
+            "ap-southeast-2",  # Asia Pacific (Sydney)
+        ]
+
+    def get_sa_regions(self) -> List[str]:
+        return ["sa-east-1"]
+
     def get_eu_regions(self) -> List[str]:
         """
         Source: https://www.aws-services.info/bedrock.html
         """
         return [
-            "eu-west-1",
-            "eu-west-3",
-            "eu-central-1",
+            "eu-west-1",  # Europe (Ireland)
+            "eu-west-2",  # Europe (London)
+            "eu-west-3",  # Europe (Paris)
+            "eu-central-1",  # Europe (Frankfurt)
+            "eu-central-2",  # Europe (Zurich)
+            "eu-south-1",  # Europe (Milan)
+            "eu-south-2",  # Europe (Spain)
+            "eu-north-1",  # Europe (Stockholm)
         ]
 
+    def get_ca_regions(self) -> List[str]:
+        return ["ca-central-1"]
 
-class AmazonTitanConfig:
-    """
-    Reference: https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/providers?model=titan-text-express-v1
-
-    Supported Params for the Amazon Titan models:
-
-    - `maxTokenCount` (integer) max tokens,
-    - `stopSequences` (string[]) list of stop sequence strings
-    - `temperature` (float) temperature for model,
-    - `topP` (int) top p for model
-    """
-
-    maxTokenCount: Optional[int] = None
-    stopSequences: Optional[list] = None
-    temperature: Optional[float] = None
-    topP: Optional[int] = None
-
-    def __init__(
-        self,
-        maxTokenCount: Optional[int] = None,
-        stopSequences: Optional[list] = None,
-        temperature: Optional[float] = None,
-        topP: Optional[int] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
-
-
-class AmazonAnthropicClaude3Config:
-    """
-    Reference:
-        https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/providers?model=claude
-        https://docs.anthropic.com/claude/docs/models-overview#model-comparison
-
-    Supported Params for the Amazon / Anthropic Claude 3 models:
-
-    - `max_tokens` Required (integer) max tokens. Default is 4096
-    - `anthropic_version` Required (string) version of anthropic for bedrock - e.g. "bedrock-2023-05-31"
-    - `system` Optional (string) the system prompt, conversion from openai format to this is handled in factory.py
-    - `temperature` Optional (float) The amount of randomness injected into the response
-    - `top_p` Optional (float) Use nucleus sampling.
-    - `top_k` Optional (int) Only sample from the top K options for each subsequent token
-    - `stop_sequences` Optional (List[str]) Custom text sequences that cause the model to stop generating
-    """
-
-    max_tokens: Optional[int] = 4096  # Opus, Sonnet, and Haiku default
-    anthropic_version: Optional[str] = "bedrock-2023-05-31"
-    system: Optional[str] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    stop_sequences: Optional[List[str]] = None
-
-    def __init__(
-        self,
-        max_tokens: Optional[int] = None,
-        anthropic_version: Optional[str] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
-
-    def get_supported_openai_params(self):
+    def get_us_regions(self) -> List[str]:
+        """
+        Source: https://www.aws-services.info/bedrock.html
+        """
         return [
-            "max_tokens",
-            "max_completion_tokens",
-            "tools",
-            "tool_choice",
-            "stream",
-            "stop",
-            "temperature",
-            "top_p",
-            "extra_headers",
+            "us-east-1",  # US East (N. Virginia)
+            "us-east-2",  # US East (Ohio)
+            "us-west-1",  # US West (N. California)
+            "us-west-2",  # US West (Oregon)
+            "us-gov-east-1",  # AWS GovCloud (US-East)
+            "us-gov-west-1",  # AWS GovCloud (US-West)
         ]
-
-    def map_openai_params(self, non_default_params: dict, optional_params: dict):
-        for param, value in non_default_params.items():
-            if param == "max_tokens" or param == "max_completion_tokens":
-                optional_params["max_tokens"] = value
-            if param == "tools":
-                optional_params["tools"] = value
-            if param == "stream":
-                optional_params["stream"] = value
-            if param == "stop":
-                optional_params["stop_sequences"] = value
-            if param == "temperature":
-                optional_params["temperature"] = value
-            if param == "top_p":
-                optional_params["top_p"] = value
-        return optional_params
-
-
-class AmazonAnthropicConfig:
-    """
-    Reference: https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/providers?model=claude
-
-    Supported Params for the Amazon / Anthropic models:
-
-    - `max_tokens_to_sample` (integer) max tokens,
-    - `temperature` (float) model temperature,
-    - `top_k` (integer) top k,
-    - `top_p` (integer) top p,
-    - `stop_sequences` (string[]) list of stop sequences - e.g. ["\\n\\nHuman:"],
-    - `anthropic_version` (string) version of anthropic for bedrock - e.g. "bedrock-2023-05-31"
-    """
-
-    max_tokens_to_sample: Optional[int] = litellm.max_tokens
-    stop_sequences: Optional[list] = None
-    temperature: Optional[float] = None
-    top_k: Optional[int] = None
-    top_p: Optional[int] = None
-    anthropic_version: Optional[str] = None
-
-    def __init__(
-        self,
-        max_tokens_to_sample: Optional[int] = None,
-        stop_sequences: Optional[list] = None,
-        temperature: Optional[float] = None,
-        top_k: Optional[int] = None,
-        top_p: Optional[int] = None,
-        anthropic_version: Optional[str] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
-
-    def get_supported_openai_params(
-        self,
-    ):
-        return [
-            "max_tokens",
-            "max_completion_tokens",
-            "temperature",
-            "stop",
-            "top_p",
-            "stream",
-        ]
-
-    def map_openai_params(self, non_default_params: dict, optional_params: dict):
-        for param, value in non_default_params.items():
-            if param == "max_tokens" or param == "max_completion_tokens":
-                optional_params["max_tokens_to_sample"] = value
-            if param == "temperature":
-                optional_params["temperature"] = value
-            if param == "top_p":
-                optional_params["top_p"] = value
-            if param == "stop":
-                optional_params["stop_sequences"] = value
-            if param == "stream" and value is True:
-                optional_params["stream"] = value
-        return optional_params
-
-
-class AmazonCohereConfig:
-    """
-    Reference: https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/providers?model=command
-
-    Supported Params for the Amazon / Cohere models:
-
-    - `max_tokens` (integer) max tokens,
-    - `temperature` (float) model temperature,
-    - `return_likelihood` (string) n/a
-    """
-
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = None
-    return_likelihood: Optional[str] = None
-
-    def __init__(
-        self,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        return_likelihood: Optional[str] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
-
-
-class AmazonAI21Config:
-    """
-    Reference: https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/providers?model=j2-ultra
-
-    Supported Params for the Amazon / AI21 models:
-
-    - `maxTokens` (int32): The maximum number of tokens to generate per result. Optional, default is 16. If no `stopSequences` are given, generation stops after producing `maxTokens`.
-
-    - `temperature` (float): Modifies the distribution from which tokens are sampled. Optional, default is 0.7. A value of 0 essentially disables sampling and results in greedy decoding.
-
-    - `topP` (float): Used for sampling tokens from the corresponding top percentile of probability mass. Optional, default is 1. For instance, a value of 0.9 considers only tokens comprising the top 90% probability mass.
-
-    - `stopSequences` (array of strings): Stops decoding if any of the input strings is generated. Optional.
-
-    - `frequencyPenalty` (object): Placeholder for frequency penalty object.
-
-    - `presencePenalty` (object): Placeholder for presence penalty object.
-
-    - `countPenalty` (object): Placeholder for count penalty object.
-    """
-
-    maxTokens: Optional[int] = None
-    temperature: Optional[float] = None
-    topP: Optional[float] = None
-    stopSequences: Optional[list] = None
-    frequencePenalty: Optional[dict] = None
-    presencePenalty: Optional[dict] = None
-    countPenalty: Optional[dict] = None
-
-    def __init__(
-        self,
-        maxTokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        topP: Optional[float] = None,
-        stopSequences: Optional[list] = None,
-        frequencePenalty: Optional[dict] = None,
-        presencePenalty: Optional[dict] = None,
-        countPenalty: Optional[dict] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
-
-
-class AnthropicConstants(Enum):
-    HUMAN_PROMPT = "\n\nHuman: "
-    AI_PROMPT = "\n\nAssistant: "
-
-
-class AmazonLlamaConfig:
-    """
-    Reference: https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/providers?model=meta.llama2-13b-chat-v1
-
-    Supported Params for the Amazon / Meta Llama models:
-
-    - `max_gen_len` (integer) max tokens,
-    - `temperature` (float) temperature for model,
-    - `top_p` (float) top p for model
-    """
-
-    max_gen_len: Optional[int] = None
-    temperature: Optional[float] = None
-    topP: Optional[float] = None
-
-    def __init__(
-        self,
-        maxTokenCount: Optional[int] = None,
-        temperature: Optional[float] = None,
-        topP: Optional[int] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
-
-
-class AmazonMistralConfig:
-    """
-    Reference: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-mistral.html
-    Supported Params for the Amazon / Mistral models:
-
-    - `max_tokens` (integer) max tokens,
-    - `temperature` (float) temperature for model,
-    - `top_p` (float) top p for model
-    - `stop` [string] A list of stop sequences that if generated by the model, stops the model from generating further output.
-    - `top_k` (float) top k for model
-    """
-
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[float] = None
-    stop: Optional[List[str]] = None
-
-    def __init__(
-        self,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[int] = None,
-        top_k: Optional[float] = None,
-        stop: Optional[List[str]] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
-
-
-class AmazonStabilityConfig:
-    """
-    Reference: https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/providers?model=stability.stable-diffusion-xl-v0
-
-    Supported Params for the Amazon / Stable Diffusion models:
-
-    - `cfg_scale` (integer): Default `7`. Between [ 0 .. 35 ]. How strictly the diffusion process adheres to the prompt text (higher values keep your image closer to your prompt)
-
-    - `seed` (float): Default: `0`. Between [ 0 .. 4294967295 ]. Random noise seed (omit this option or use 0 for a random seed)
-
-    - `steps` (array of strings): Default `30`. Between [ 10 .. 50 ]. Number of diffusion steps to run.
-
-    - `width` (integer): Default: `512`. multiple of 64 >= 128. Width of the image to generate, in pixels, in an increment divible by 64.
-        Engine-specific dimension validation:
-
-        - SDXL Beta: must be between 128x128 and 512x896 (or 896x512); only one dimension can be greater than 512.
-        - SDXL v0.9: must be one of 1024x1024, 1152x896, 1216x832, 1344x768, 1536x640, 640x1536, 768x1344, 832x1216, or 896x1152
-        - SDXL v1.0: same as SDXL v0.9
-        - SD v1.6: must be between 320x320 and 1536x1536
-
-    - `height` (integer): Default: `512`. multiple of 64 >= 128. Height of the image to generate, in pixels, in an increment divible by 64.
-        Engine-specific dimension validation:
-
-        - SDXL Beta: must be between 128x128 and 512x896 (or 896x512); only one dimension can be greater than 512.
-        - SDXL v0.9: must be one of 1024x1024, 1152x896, 1216x832, 1344x768, 1536x640, 640x1536, 768x1344, 832x1216, or 896x1152
-        - SDXL v1.0: same as SDXL v0.9
-        - SD v1.6: must be between 320x320 and 1536x1536
-    """
-
-    cfg_scale: Optional[int] = None
-    seed: Optional[float] = None
-    steps: Optional[List[str]] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-
-    def __init__(
-        self,
-        cfg_scale: Optional[int] = None,
-        seed: Optional[float] = None,
-        steps: Optional[List[str]] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-    ) -> None:
-        locals_ = locals()
-        for key, value in locals_.items():
-            if key != "self" and value is not None:
-                setattr(self.__class__, key, value)
-
-    @classmethod
-    def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
 
 
 def add_custom_header(headers):
@@ -775,3 +334,277 @@ def get_bedrock_tool_name(response_tool_name: str) -> str:
             response_tool_name
         ]
     return response_tool_name
+
+
+class BedrockModelInfo(BaseLLMModelInfo):
+    global_config = AmazonBedrockGlobalConfig()
+    all_global_regions = global_config.get_all_regions()
+
+    @staticmethod
+    def get_api_base(api_base: Optional[str] = None) -> Optional[str]:
+        """
+        Get the API base for the given model.
+        """
+        return api_base
+
+    @staticmethod
+    def get_api_key(api_key: Optional[str] = None) -> Optional[str]:
+        """
+        Get the API key for the given model.
+        """
+        return api_key
+
+    def validate_environment(
+        self,
+        headers: dict,
+        model: str,
+        messages: List["AllMessageValues"],
+        optional_params: dict,
+        litellm_params: dict,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+    ) -> dict:
+        return headers
+
+    def get_models(
+        self, api_key: Optional[str] = None, api_base: Optional[str] = None
+    ) -> List[str]:
+        return []
+
+    @staticmethod
+    def extract_model_name_from_arn(model: str) -> str:
+        """
+        Extract the model name from an AWS Bedrock ARN.
+        Returns the string after the last '/' if 'arn' is in the input string.
+
+        Args:
+            arn (str): The ARN string to parse
+
+        Returns:
+            str: The extracted model name if 'arn' is in the string,
+                otherwise returns the original string
+        """
+        if "arn" in model.lower():
+            return model.split("/")[-1]
+        return model
+
+    @staticmethod
+    def get_non_litellm_routing_model_name(model: str) -> str:
+        if model.startswith("bedrock/"):
+            model = model.split("/", 1)[1]
+
+        if model.startswith("converse/"):
+            model = model.split("/", 1)[1]
+
+        if model.startswith("invoke/"):
+            model = model.split("/", 1)[1]
+
+        return model
+
+    @staticmethod
+    def get_base_model(model: str) -> str:
+        """
+        Get the base model from the given model name.
+
+        Handle model names like - "us.meta.llama3-2-11b-instruct-v1:0" -> "meta.llama3-2-11b-instruct-v1"
+        AND "meta.llama3-2-11b-instruct-v1:0" -> "meta.llama3-2-11b-instruct-v1"
+        """
+
+        model = BedrockModelInfo.get_non_litellm_routing_model_name(model=model)
+        model = BedrockModelInfo.extract_model_name_from_arn(model)
+
+        potential_region = model.split(".", 1)[0]
+
+        alt_potential_region = model.split("/", 1)[
+            0
+        ]  # in model cost map we store regional information like `/us-west-2/bedrock-model`
+
+        if (
+            potential_region
+            in BedrockModelInfo._supported_cross_region_inference_region()
+        ):
+            return model.split(".", 1)[1]
+        elif (
+            alt_potential_region in BedrockModelInfo.all_global_regions
+            and len(model.split("/", 1)) > 1
+        ):
+            return model.split("/", 1)[1]
+
+        return model
+
+    @staticmethod
+    def _supported_cross_region_inference_region() -> List[str]:
+        """
+        Abbreviations of regions AWS Bedrock supports for cross region inference
+        """
+        return ["us", "eu", "apac"]
+
+    @staticmethod
+    def get_bedrock_route(
+        model: str,
+    ) -> Literal["converse", "invoke", "converse_like", "agent"]:
+        """
+        Get the bedrock route for the given model.
+        """
+        route_mappings: Dict[str, Literal["invoke", "converse_like", "converse", "agent"]] = {
+            "invoke/": "invoke",
+            "converse_like/": "converse_like", 
+            "converse/": "converse",
+            "agent/": "agent"
+        }
+        
+        # Check explicit routes first
+        for prefix, route_type in route_mappings.items():
+            if prefix in model:
+                return route_type
+        
+        base_model = BedrockModelInfo.get_base_model(model)
+        alt_model = BedrockModelInfo.get_non_litellm_routing_model_name(model=model)
+        if (
+            base_model in litellm.bedrock_converse_models
+            or alt_model in litellm.bedrock_converse_models
+        ):
+            return "converse"
+        return "invoke"
+    
+    @staticmethod
+    def _explicit_converse_route(model: str) -> bool:
+        """
+        Check if the model is an explicit converse route.
+        """
+        return "converse/" in model
+    
+    @staticmethod
+    def _explicit_invoke_route(model: str) -> bool:
+        """
+        Check if the model is an explicit invoke route.
+        """
+        return "invoke/" in model
+    
+    @staticmethod
+    def _explicit_agent_route(model: str) -> bool:
+        """
+        Check if the model is an explicit agent route.
+        """
+        return "agent/" in model
+    
+    @staticmethod
+    def _explicit_converse_like_route(model: str) -> bool:
+        """
+        Check if the model is an explicit converse like route.
+        """
+        return "converse_like/" in model
+    
+
+    @staticmethod
+    def get_bedrock_provider_config_for_messages_api(model: str) -> Optional[BaseAnthropicMessagesConfig]:
+        """
+        Get the bedrock provider config for the given model.
+
+        Only route to AmazonAnthropicClaude3MessagesConfig() for BaseMessagesConfig
+
+        All other routes should return None since they will go through litellm.completion
+        """
+
+        #########################################################
+        # Converse routes should go through litellm.completion()
+        if BedrockModelInfo._explicit_converse_route(model):
+            return None
+        
+        #########################################################
+        # This goes through litellm.AmazonAnthropicClaude3MessagesConfig()
+        # Since bedrock Invoke supports Native Anthropic Messages API
+        #########################################################
+        if "claude" in model:
+            return litellm.AmazonAnthropicClaudeMessagesConfig()
+        
+        #########################################################
+        # These routes will go through litellm.completion()
+        #########################################################
+        return None
+
+class BedrockEventStreamDecoderBase:
+    """
+    Base class for event stream decoding for Bedrock
+    """
+
+    _response_stream_shape_cache = None
+
+    def __init__(self):
+        from botocore.parsers import EventStreamJSONParser
+
+        self.parser = EventStreamJSONParser()
+
+    def get_response_stream_shape(self):
+        if self._response_stream_shape_cache is None:
+            from botocore.loaders import Loader
+            from botocore.model import ServiceModel
+
+            loader = Loader()
+            bedrock_service_dict = loader.load_service_model(
+                "bedrock-runtime", "service-2"
+            )
+            bedrock_service_model = ServiceModel(bedrock_service_dict)
+            self._response_stream_shape_cache = bedrock_service_model.shape_for(
+                "ResponseStream"
+            )
+
+        return self._response_stream_shape_cache
+
+    def _parse_message_from_event(self, event) -> Optional[str]:
+        response_dict = event.to_response_dict()
+        parsed_response = self.parser.parse(
+            response_dict, self.get_response_stream_shape()
+        )
+
+        if response_dict["status_code"] != 200:
+            decoded_body = response_dict["body"].decode()
+            if isinstance(decoded_body, dict):
+                error_message = decoded_body.get("message")
+            elif isinstance(decoded_body, str):
+                error_message = decoded_body
+            else:
+                error_message = ""
+            exception_status = response_dict["headers"].get(":exception-type")
+            error_message = exception_status + " " + error_message
+            raise BedrockError(
+                status_code=response_dict["status_code"],
+                message=(
+                    json.dumps(error_message)
+                    if isinstance(error_message, dict)
+                    else error_message
+                ),
+            )
+        if "chunk" in parsed_response:
+            chunk = parsed_response.get("chunk")
+            if not chunk:
+                return None
+            return chunk.get("bytes").decode()  # type: ignore[no-any-return]
+        else:
+            chunk = response_dict.get("body")
+            if not chunk:
+                return None
+
+            return chunk.decode()  # type: ignore[no-any-return]
+
+
+def get_anthropic_beta_from_headers(headers: dict) -> List[str]:
+    """
+    Extract anthropic-beta header values and convert them to a list.
+    Supports comma-separated values from user headers.
+    
+    Used by both converse and invoke transformations for consistent handling
+    of anthropic-beta headers that should be passed to AWS Bedrock.
+    
+    Args:
+        headers (dict): Request headers dictionary
+        
+    Returns:
+        List[str]: List of anthropic beta feature strings, empty list if no header
+    """
+    anthropic_beta_header = headers.get("anthropic-beta")
+    if not anthropic_beta_header:
+        return []
+    
+    # Split comma-separated values and strip whitespace
+    return [beta.strip() for beta in anthropic_beta_header.split(",")]

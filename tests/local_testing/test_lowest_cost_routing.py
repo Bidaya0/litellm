@@ -15,7 +15,7 @@ sys.path.insert(
 import pytest
 from litellm import Router
 from litellm.router_strategy.lowest_cost import LowestCostLoggingHandler
-from litellm.caching import DualCache
+from litellm.caching.caching import DualCache
 
 ### UNIT TESTS FOR cost ROUTING ###
 
@@ -60,7 +60,7 @@ async def test_get_available_deployments_custom_price():
         {
             "model_name": "gpt-3.5-turbo",
             "litellm_params": {
-                "model": "azure/chatgpt-v-2",
+                "model": "azure/chatgpt-v-3",
                 "input_cost_per_token": 0.00003,
                 "output_cost_per_token": 0.00003,
             },

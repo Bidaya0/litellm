@@ -156,7 +156,9 @@ We support ALL Groq models, just set `groq/` as a prefix when sending completion
 | llama3-70b-8192    | `completion(model="groq/llama3-70b-8192", messages)`    | 
 | llama2-70b-4096    | `completion(model="groq/llama2-70b-4096", messages)`    | 
 | mixtral-8x7b-32768 | `completion(model="groq/mixtral-8x7b-32768", messages)` |
-| gemma-7b-it        | `completion(model="groq/gemma-7b-it", messages)`        |  
+| gemma-7b-it        | `completion(model="groq/gemma-7b-it", messages)`        |
+| moonshotai/kimi-k2-instruct | `completion(model="groq/moonshotai/kimi-k2-instruct", messages)` |
+| qwen3-32b       | `completion(model="groq/qwen/qwen3-32b", messages)`       |
 
 ## Groq - Tool / Function Calling Example
 
@@ -259,6 +261,99 @@ if tool_calls:
     print("second response\n", second_response)
 ```
 
+## Groq - Vision Example    
+
+Select Groq models support vision. Check out their [model list](https://console.groq.com/docs/vision) for more details.
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+from litellm import completion
+
+import os 
+from litellm import completion
+
+os.environ["GROQ_API_KEY"] = "your-api-key"
+
+# openai call
+response = completion(
+    model = "groq/llama-3.2-11b-vision-preview", 
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                            {
+                                "type": "text",
+                                "text": "What’s in this image?"
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+                                }
+                            }
+                        ]
+        }
+    ],
+)
+
+```
+
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+1. Add Groq models to config.yaml   
+
+```yaml
+model_list:
+  - model_name: groq-llama3-8b-8192 # Model Alias to use for requests
+    litellm_params:
+      model: groq/llama3-8b-8192
+      api_key: "os.environ/GROQ_API_KEY" # ensure you have `GROQ_API_KEY` in your .env
+```
+
+2. Start Proxy
+
+```bash
+litellm --config config.yaml
+```
+
+3. Test it
+
+```python
+import os 
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-1234", # your litellm proxy api key
+)
+
+response = client.chat.completions.create(
+    model = "gpt-4-vision-preview",  # use model="llava-hf" to test your custom OpenAI endpoint
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                            {
+                                "type": "text",
+                                "text": "What’s in this image?"
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+                                }
+                            }
+                        ]
+        }
+    ],
+)
+
+```
+</TabItem>
+</Tabs>
+
 ## Speech to Text - Whisper
 
 ```python
@@ -275,3 +370,4 @@ transcript = litellm.transcription(
 
 print("response=", transcript)
 ```
+

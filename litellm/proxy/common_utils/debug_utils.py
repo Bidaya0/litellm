@@ -1,15 +1,53 @@
 # Start tracing memory allocations
+import asyncio
 import json
 import os
 import tracemalloc
+from collections import Counter
 
 from fastapi import APIRouter
 
-import litellm
-from litellm import get_secret, get_secret_str
+from litellm import get_secret_str
 from litellm._logging import verbose_proxy_logger
 
 router = APIRouter()
+
+
+@router.get("/debug/asyncio-tasks")
+async def get_active_tasks_stats():
+    """
+    Returns:
+      total_active_tasks: int
+      by_name: { coroutine_name: count }
+    """
+    MAX_TASKS_TO_CHECK = 5000
+    # Gather all tasks in this event loop (including this endpoint’s own task).
+    all_tasks = asyncio.all_tasks()
+
+    # Filter out tasks that are already done.
+    active_tasks = [t for t in all_tasks if not t.done()]
+
+    # Count how many active tasks exist, grouped by coroutine function name.
+    counter = Counter()
+    for idx, task in enumerate(active_tasks):
+
+        # reasonable max circuit breaker
+        if idx >= MAX_TASKS_TO_CHECK:
+            break
+        coro = task.get_coro()
+        # Derive a human‐readable name from the coroutine:
+        name = (
+            getattr(coro, "__qualname__", None)
+            or getattr(coro, "__name__", None)
+            or repr(coro)
+        )
+        counter[name] += 1
+
+    return {
+        "total_active_tasks": len(active_tasks),
+        "by_name": dict(counter),
+    }
+
 
 if os.environ.get("LITELLM_PROFILE", "false").lower() == "true":
     try:
@@ -116,7 +154,6 @@ async def memory_usage_in_mem_cache_items():
 
 @router.get("/otel-spans", include_in_schema=False)
 async def get_otel_spans():
-    from litellm.integrations.opentelemetry import OpenTelemetry
     from litellm.proxy.proxy_server import open_telemetry_logger
 
     if open_telemetry_logger is None:

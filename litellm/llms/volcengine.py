@@ -1,10 +1,9 @@
-import types
-from typing import Literal, Optional, Union
+from typing import Optional, Union
 
-import litellm
+from litellm.llms.openai_like.chat.transformation import OpenAILikeChatConfig
 
 
-class VolcEngineConfig:
+class VolcEngineConfig(OpenAILikeChatConfig):
     frequency_penalty: Optional[int] = None
     function_call: Optional[Union[str, dict]] = None
     functions: Optional[list] = None
@@ -38,21 +37,7 @@ class VolcEngineConfig:
 
     @classmethod
     def get_config(cls):
-        return {
-            k: v
-            for k, v in cls.__dict__.items()
-            if not k.startswith("__")
-            and not isinstance(
-                v,
-                (
-                    types.FunctionType,
-                    types.BuiltinFunctionType,
-                    classmethod,
-                    staticmethod,
-                ),
-            )
-            and v is not None
-        }
+        return super().get_config()
 
     def get_supported_openai_params(self, model: str) -> list:
         return [
@@ -76,15 +61,38 @@ class VolcEngineConfig:
             "functions",
             "max_retries",
             "extra_headers",
+            "thinking",
         ]  # works across all models
 
     def map_openai_params(
-        self, non_default_params: dict, optional_params: dict, model: str
+        self,
+        non_default_params: dict,
+        optional_params: dict,
+        model: str,
+        drop_params: bool,
+        replace_max_completion_tokens_with_max_tokens: bool = True,
     ) -> dict:
-        supported_openai_params = self.get_supported_openai_params(model)
-        for param, value in non_default_params.items():
-            if param == "max_completion_tokens":
-                optional_params["max_tokens"] = value
-            elif param in supported_openai_params:
-                optional_params[param] = value
+        optional_params = super().map_openai_params(
+            non_default_params,
+            optional_params,
+            model,
+            drop_params,
+            replace_max_completion_tokens_with_max_tokens,
+        )
+
+        if "thinking" in optional_params:
+            thinking_value = optional_params.pop("thinking")
+            
+            # Handle disabled thinking case - don't add to extra_body if disabled
+            if (
+                thinking_value is not None 
+                and isinstance(thinking_value, dict) 
+                and thinking_value.get("type") == "disabled"
+            ):
+                # Skip adding thinking parameter when it's disabled
+                pass
+            else:
+                # Add thinking parameter to extra_body for all other cases
+                optional_params.setdefault("extra_body", {})["thinking"] = thinking_value
+
         return optional_params

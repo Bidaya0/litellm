@@ -39,28 +39,33 @@ This is a list of openai params we translate across providers.
 
 Use `litellm.get_supported_openai_params()` for an updated list of params for each model + provider 
 
-| Provider | temperature | max_completion_tokens | max_tokens | top_p | stream | stream_options | stop | n | presence_penalty | frequency_penalty | functions | function_call | logit_bias | user | response_format | seed | tools | tool_choice | logprobs | top_logprobs | extra_headers |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-|Anthropic| ✅ | ✅ | ✅ |✅ | ✅ | ✅ | ✅ |  |  |   |  |  |  |✅ | ✅ | ✅ | ✅ | ✅ |  |  | ✅ |
-|OpenAI| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |✅ | ✅ | ✅ | ✅ |✅ | ✅ | ✅ | ✅ | ✅ |
-|Azure OpenAI| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |✅ | ✅ | ✅ | ✅ |✅ | ✅ |  |  | ✅ |
-|Replicate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |  |   |  |   |
-|Anyscale | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-|Cohere| ✅ | ✅ | ✅ | ✅ |  ✅ | ✅ | ✅ | ✅ | ✅ |   |   |
-|Huggingface| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |  |   |    |
-|Openrouter| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | | | | | ✅ |✅ | | | |
-|AI21| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |  |  |
-|VertexAI| ✅ | ✅ | ✅ | | ✅ | ✅ |  |  |  |  |   | | | | ✅ | ✅ | | |
-|Bedrock| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |  |  |   |  |   | | | | | ✅ (model dependent) | |
-|Sagemaker| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |  |  |   |
-|TogetherAI| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |  |  |  |  |  | ✅ |  |  | ✅ |  | ✅ | ✅ |  |  |  |
-|AlephAlpha| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |   |  |   |
-|NLP Cloud| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | | |  |  |   |
-|Petals| ✅ | ✅ |  | ✅ | ✅ | |  |   |  |   |
-|Ollama| ✅ | ✅ | ✅ |✅ | ✅ | ✅ |  |   | ✅ |  |   | | | ✅ |  | |✅| | | | | | |
-|Databricks| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |  |   | |  |   | | | | | |
-|ClarifAI| ✅ | ✅ | ✅ | |✅ | ✅ |  |   | |  |   | | | | | |
-|Github| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | | | | | ✅ |✅ (model dependent)|✅ (model dependent)| | |
+| Provider | temperature | max_completion_tokens | max_tokens | top_p | stream | stream_options | stop | n | presence_penalty | frequency_penalty | functions | function_call | logit_bias | user | response_format | seed| tools | tool_choice | logprobs | top_logprobs | extra_headers |
+|--------------|-------------|------------------------|------------|-------|--------|----------------|------|-----|------------------|-------------------|-----------|----------------|-------------|------|------------------|-------------------|--------|--------------|----------|---------------|----------------------|
+| Anthropic| ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | || | || | ✅ | ✅ | | ✅ | ✅ || | ✅|
+| OpenAI | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅| ✅ | ✅| ✅| ✅ | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅| ✅|
+| Azure OpenAI | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅| ✅ | ✅| ✅| ✅ | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅| ✅|
+| xAI| ✅|| ✅ | ✅| ✅ | ✅ | ✅ | ✅| ✅ | ✅| || ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅||
+| Replicate| ✅| ✅ | ✅ | ✅| ✅ | ✅ || || | || ||| |||| ||
+| Anyscale | ✅| ✅ | ✅ | ✅| ✅ | ✅ || || | || ||| |||| ||
+| Cohere | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅|| | || ||| |||| ||
+| Huggingface| ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | || | || ||| |||| ||
+| Openrouter | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅| ✅ | ✅| ✅|| ||| ✅| ✅ ||| ||
+| AI21 | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅|| | || ||| |||| ||
+| VertexAI | ✅| ✅ | ✅ | | ✅ | ✅ || || | || || ✅ | ✅|||| ||
+| Bedrock| ✅| ✅ | ✅ | ✅| ✅ | ✅ || || | || || ✅ (model dependent) | |||| ||
+| Sagemaker| ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | || | || ||| |||| ||
+| TogetherAI | ✅| ✅ | ✅ | ✅| ✅ | ✅ || || | ✅|| || ✅ | | ✅ | ✅ || ||
+| Sambanova| ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | || | || || ✅ | | ✅ | ✅ || ||
+| AlephAlpha | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | || | || ||| |||| ||
+| NLP Cloud| ✅| ✅ | ✅ | ✅| ✅ | ✅ || || | || ||| |||| ||
+| Petals | ✅| ✅ || ✅| ✅ ||| || | || ||| |||| ||
+| Ollama | ✅| ✅ | ✅ | ✅| ✅ | ✅ || ✅|| | || ✅||| | ✅ ||| ||
+| Databricks | ✅| ✅ | ✅ | ✅| ✅ | ✅ || || | || ||| |||| ||
+| ClarifAI | ✅| ✅ | ✅ | | ✅ | ✅ || || | || ||| |||| ||
+| Github | ✅| ✅ | ✅ | ✅| ✅ | ✅ | ✅ | ✅| ✅ | ✅| ✅|| || ✅ | ✅ (model dependent) | ✅ (model dependent) || ||
+| Novita AI| ✅| ✅ || ✅| ✅ | ✅ | ✅ | ✅| ✅ | ✅| || ✅||| |||| ||
+| Bytez | ✅| ✅ || ✅| ✅ | | | ✅|| || || || || || ||
+
 :::note
 
 By default, LiteLLM raises an exception if the openai param being passed in isn't supported. 
@@ -190,6 +195,10 @@ def completion(
 - `logprobs`: * bool (optional)* - Whether to return log probabilities of the output tokens or not. If true returns the log probabilities of each output token returned in the content of message
         
 - `top_logprobs`: *int (optional)* - An integer between 0 and 5 specifying the number of most likely tokens to return at each token position, each with an associated log probability. `logprobs` must be set to true if this parameter is used.
+
+- `headers`: *dict (optional)* - A dictionary of headers to be sent with the request.
+
+- `extra_headers`: *dict (optional)* - Alternative to `headers`, used to send extra headers in LLM API request. 
 
 #### Deprecated Params
 - `functions`: *array* - A list of functions that the model may use to generate JSON inputs. Each function should have the following properties:

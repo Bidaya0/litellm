@@ -1,13 +1,15 @@
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# [BETA] Batches API
+# /batches
 
 Covers Batches, Files
 
-## **Supported Providers**:
-- Azure OpenAI
-- OpenAI
+| Feature | Supported | Notes | 
+|-------|-------|-------|
+| Supported Providers | OpenAI, Azure, Vertex | - |
+| ✨ Cost Tracking | ✅ | LiteLLM Enterprise only |
+| Logging | ✅ | Works across all logging integrations |
 
 ## Quick Start 
 
@@ -76,8 +78,9 @@ curl http://localhost:4000/v1/batches \
 **Create File for Batch Completion**
 
 ```python
-from litellm
+import litellm
 import os 
+import asyncio
 
 os.environ["OPENAI_API_KEY"] = "sk-.."
 
@@ -95,8 +98,9 @@ print("Response from creating file=", file_obj)
 **Create Batch Request**
 
 ```python
-from litellm
+import litellm
 import os 
+import asyncio
 
 create_batch_response = await litellm.acreate_batch(
     completion_window="24h",
@@ -112,10 +116,38 @@ print("response from litellm.create_batch=", create_batch_response)
 **Retrieve the Specific Batch and File Content**
 
 ```python
+    # Maximum wait time before we give up
+    MAX_WAIT_TIME = 300  
 
-retrieved_batch = await litellm.aretrieve_batch(
-    batch_id=create_batch_response.id, custom_llm_provider="openai"
-)
+    # Time to wait between each status check
+    POLL_INTERVAL = 5
+    
+    #Time waited till now 
+    waited = 0
+
+    # Wait for the batch to finish processing before trying to retrieve output
+    # This loop checks the batch status every few seconds (polling)
+
+    while True:
+        retrieved_batch = await litellm.aretrieve_batch(
+            batch_id=create_batch_response.id,
+            custom_llm_provider="openai"
+        )
+        
+        status = retrieved_batch.status
+        print(f"⏳ Batch status: {status}")
+        
+        if status == "completed" and retrieved_batch.output_file_id:
+            print("✅ Batch complete. Output file ID:", retrieved_batch.output_file_id)
+            break
+        elif status in ["failed", "cancelled", "expired"]:
+            raise RuntimeError(f"❌ Batch failed with status: {status}")
+        
+        await asyncio.sleep(POLL_INTERVAL)
+        waited += POLL_INTERVAL
+        if waited > MAX_WAIT_TIME:
+            raise TimeoutError("❌ Timed out waiting for batch to complete.")
+
 print("retrieved batch=", retrieved_batch)
 # just assert that we retrieved a non None batch
 
@@ -141,182 +173,30 @@ print("list_batches_response=", list_batches_response)
 
 </Tabs>
 
-## [👉 Proxy API Reference](https://litellm-api.up.railway.app/#/batch)
 
-## Azure Batches API 
-
-Just add the azure env vars to your environment. 
-
-```bash
-export AZURE_API_KEY=""
-export AZURE_API_BASE=""
-```
-
-AND use `/azure/*` for the Batches API calls
-
-```bash
-http://0.0.0.0:4000/azure/v1/batches
-```
-### Usage
-
-**Setup**
-
-- Add Azure API Keys to your environment
-
-#### 1. Upload a File
-
-```bash
-curl http://localhost:4000/azure/v1/files \
-    -H "Authorization: Bearer sk-1234" \
-    -F purpose="batch" \
-    -F file="@mydata.jsonl"
-```
-
-**Example File**
-
-Note: `model` should be your azure deployment name.
-
-```json
-{"custom_id": "task-0", "method": "POST", "url": "/chat/completions", "body": {"model": "REPLACE-WITH-MODEL-DEPLOYMENT-NAME", "messages": [{"role": "system", "content": "You are an AI assistant that helps people find information."}, {"role": "user", "content": "When was Microsoft founded?"}]}}
-{"custom_id": "task-1", "method": "POST", "url": "/chat/completions", "body": {"model": "REPLACE-WITH-MODEL-DEPLOYMENT-NAME", "messages": [{"role": "system", "content": "You are an AI assistant that helps people find information."}, {"role": "user", "content": "When was the first XBOX released?"}]}}
-{"custom_id": "task-2", "method": "POST", "url": "/chat/completions", "body": {"model": "REPLACE-WITH-MODEL-DEPLOYMENT-NAME", "messages": [{"role": "system", "content": "You are an AI assistant that helps people find information."}, {"role": "user", "content": "What is Altair Basic?"}]}}
-```
-
-#### 2. Create a batch 
-
-```bash
-curl http://0.0.0.0:4000/azure/v1/batches \
-  -H "Authorization: Bearer $LITELLM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input_file_id": "file-abc123",
-    "endpoint": "/v1/chat/completions",
-    "completion_window": "24h"
-  }'
-
-```
-
-#### 3. Retrieve batch
+## **Supported Providers**:
+### [Azure OpenAI](./providers/azure#azure-batches-api)
+### [OpenAI](#quick-start)
+### [Vertex AI](./providers/vertex#batch-apis)
 
 
-```bash
-curl http://0.0.0.0:4000/azure/v1/batches/batch_abc123 \
-  -H "Authorization: Bearer $LITELLM_API_KEY" \
-  -H "Content-Type: application/json" \
-```
+## How Cost Tracking for Batches API Works
 
-#### 4. Cancel batch 
+LiteLLM tracks batch processing costs by logging two key events:
 
-```bash
-curl http://0.0.0.0:4000/azure/v1/batches/batch_abc123/cancel \
-  -H "Authorization: Bearer $LITELLM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -X POST
-```
+| Event Type | Description | When it's Logged |
+|------------|-------------|------------------|
+| `acreate_batch` | Initial batch creation | When batch request is submitted |
+| `batch_success` | Final usage and cost | When batch processing completes |
 
-#### 5. List Batch
+Cost calculation:
 
-```bash
-curl http://0.0.0.0:4000/v1/batches?limit=2 \
-  -H "Authorization: Bearer $LITELLM_API_KEY" \
-  -H "Content-Type: application/json"
-```
-
-### [👉 Health Check Azure Batch models](./proxy/health.md#batch-models-azure-only)
+- LiteLLM polls the batch status until completion
+- Upon completion, it aggregates usage and costs from all responses in the output file
+- Total `token` and `response_cost` reflect the combined metrics across all batch responses
 
 
-### [BETA] Loadbalance Multiple Azure Deployments 
-In your config.yaml, set `enable_loadbalancing_on_batch_endpoints: true`
-
-```yaml
-model_list:
-  - model_name: "batch-gpt-4o-mini"
-    litellm_params:
-      model: "azure/gpt-4o-mini"
-      api_key: os.environ/AZURE_API_KEY
-      api_base: os.environ/AZURE_API_BASE
-    model_info:
-      mode: batch
-
-litellm_settings:
-  enable_loadbalancing_on_batch_endpoints: true # 👈 KEY CHANGE
-```
-
-Note: This works on `{PROXY_BASE_URL}/v1/files` and `{PROXY_BASE_URL}/v1/batches`.
-Note: Response is in the OpenAI-format. 
-
-1. Upload a file 
-
-Just set `model: batch-gpt-4o-mini` in your .jsonl.
-
-```bash
-curl http://localhost:4000/v1/files \
-    -H "Authorization: Bearer sk-1234" \
-    -F purpose="batch" \
-    -F file="@mydata.jsonl"
-```
-
-**Example File**
-
-Note: `model` should be your azure deployment name.
-
-```json
-{"custom_id": "task-0", "method": "POST", "url": "/chat/completions", "body": {"model": "batch-gpt-4o-mini", "messages": [{"role": "system", "content": "You are an AI assistant that helps people find information."}, {"role": "user", "content": "When was Microsoft founded?"}]}}
-{"custom_id": "task-1", "method": "POST", "url": "/chat/completions", "body": {"model": "batch-gpt-4o-mini", "messages": [{"role": "system", "content": "You are an AI assistant that helps people find information."}, {"role": "user", "content": "When was the first XBOX released?"}]}}
-{"custom_id": "task-2", "method": "POST", "url": "/chat/completions", "body": {"model": "batch-gpt-4o-mini", "messages": [{"role": "system", "content": "You are an AI assistant that helps people find information."}, {"role": "user", "content": "What is Altair Basic?"}]}}
-```
-
-Expected Response (OpenAI-compatible)
-
-```bash
-{"id":"file-f0be81f654454113a922da60acb0eea6",...}
-```
-
-2. Create a batch 
-
-```bash
-curl http://0.0.0.0:4000/v1/batches \
-  -H "Authorization: Bearer $LITELLM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input_file_id": "file-f0be81f654454113a922da60acb0eea6",
-    "endpoint": "/v1/chat/completions",
-    "completion_window": "24h",
-    "model: "batch-gpt-4o-mini"
-  }'
-```
-
-Expected Response: 
-
-```bash
-{"id":"batch_94e43f0a-d805-477d-adf9-bbb9c50910ed",...}
-```
-
-3. Retrieve a batch 
-
-```bash
-curl http://0.0.0.0:4000/v1/batches/batch_94e43f0a-d805-477d-adf9-bbb9c50910ed \
-  -H "Authorization: Bearer $LITELLM_API_KEY" \
-  -H "Content-Type: application/json" \
-```
 
 
-Expected Response: 
 
-```
-{"id":"batch_94e43f0a-d805-477d-adf9-bbb9c50910ed",...}
-```
-
-4. List batch
-
-```bash
-curl http://0.0.0.0:4000/v1/batches?limit=2 \
-  -H "Authorization: Bearer $LITELLM_API_KEY" \
-  -H "Content-Type: application/json"
-```
-
-Expected Response:
-
-```bash
-{"data":[{"id":"batch_R3V...}
-```
+## [Swagger API Reference](https://litellm-api.up.railway.app/#/batch)

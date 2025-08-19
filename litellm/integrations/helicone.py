@@ -3,11 +3,7 @@
 import os
 import traceback
 
-import dotenv
-import requests  # type: ignore
-
 import litellm
-from litellm._logging import verbose_logger
 
 
 class HeliconeLogger:
@@ -28,6 +24,9 @@ class HeliconeLogger:
         # Instance variables
         self.provider_url = "https://api.openai.com/v1"
         self.key = os.getenv("HELICONE_API_KEY")
+        self.api_base = os.getenv("HELICONE_API_BASE") or "https://api.hconeai.com"
+        if self.api_base.endswith("/"):
+            self.api_base = self.api_base[:-1]
 
     def claude_mapping(self, model, messages, response_obj):
         from anthropic import AI_PROMPT, HUMAN_PROMPT
@@ -143,9 +142,9 @@ class HeliconeLogger:
 
             # Code to be executed
             provider_url = self.provider_url
-            url = "https://api.hconeai.com/oai/v1/log"
+            url = f"{self.api_base}/oai/v1/log"
             if "claude" in model:
-                url = "https://api.hconeai.com/anthropic/v1/log"
+                url = f"{self.api_base}/anthropic/v1/log"
                 provider_url = "https://api.anthropic.com/v1/messages"
             headers = {
                 "Authorization": f"Bearer {self.key}",
@@ -179,7 +178,7 @@ class HeliconeLogger:
                     },
                 },  # {"seconds": .., "milliseconds": ..}
             }
-            response = requests.post(url, headers=headers, json=data)
+            response = litellm.module_level_client.post(url, headers=headers, json=data)
             if response.status_code == 200:
                 print_verbose("Helicone Logging - Success!")
             else:

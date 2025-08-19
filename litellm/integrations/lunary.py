@@ -20,7 +20,6 @@ def parse_tool_calls(tool_calls):
         return None
 
     def clean_tool_call(tool_call):
-
         serialized = {
             "type": tool_call.type,
             "id": tool_call.id,
@@ -36,7 +35,6 @@ def parse_tool_calls(tool_calls):
 
 
 def parse_messages(input):
-
     if input is None:
         return None
 
@@ -149,10 +147,11 @@ class LunaryLogger:
             else:
                 error_obj = None
 
-            self.lunary_client.track_event(
+            self.lunary_client.track_event(  # type: ignore
                 type,
                 "start",
                 run_id,
+                parent_run_id=metadata.get("parent_run_id", None),
                 user_id=user_id,
                 name=model,
                 input=parse_messages(input),
@@ -164,7 +163,7 @@ class LunaryLogger:
                 params=extra,
             )
 
-            self.lunary_client.track_event(
+            self.lunary_client.track_event(  # type: ignore
                 type,
                 event,
                 run_id,

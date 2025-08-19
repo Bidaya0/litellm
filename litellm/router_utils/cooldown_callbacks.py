@@ -12,20 +12,25 @@ if TYPE_CHECKING:
     from litellm.router import Router as _Router
 
     LitellmRouter = _Router
+    try:
+        from litellm_enterprise.integrations.prometheus import PrometheusLogger
+    except Exception:
+        PrometheusLogger = None
 else:
     LitellmRouter = Any
+    PrometheusLogger = Any
 
 
 async def router_cooldown_event_callback(
     litellm_router_instance: LitellmRouter,
     deployment_id: str,
     exception_status: Union[str, int],
-    cooldown_time: float,
+    cooldown_time: Optional[float],
 ):
     """
     Callback triggered when a deployment is put into cooldown by litellm
 
-    - Updates deploymen state on Prometheus
+    - Updates deployment state on Prometheus
     - Increments cooldown metric for deployment on Prometheus
     """
     verbose_logger.debug("In router_cooldown_event_callback - updating prometheus")
@@ -56,34 +61,47 @@ async def router_cooldown_event_callback(
     except Exception:
         pass
 
-    # Trigger cooldown on Prometheus
-    from litellm.integrations.custom_logger import CustomLogger
-    from litellm.integrations.prometheus import PrometheusLogger
-    from litellm.litellm_core_utils.litellm_logging import (
-        get_custom_logger_compatible_class,
-    )
-
     # get the prometheus logger from in memory loggers
-    prometheusLogger: Optional[CustomLogger] = get_custom_logger_compatible_class(
-        logging_integration="prometheus",
-    )
+    prometheusLogger: Optional[
+        PrometheusLogger
+    ] = _get_prometheus_logger_from_callbacks()
 
     if prometheusLogger is not None:
+        prometheusLogger.set_deployment_complete_outage(
+            litellm_model_name=_model_name,
+            model_id=model_id,
+            api_base=_api_base,
+            api_provider=llm_provider,
+        )
 
-        if isinstance(prometheusLogger, PrometheusLogger):
-            prometheusLogger.set_deployment_complete_outage(
-                litellm_model_name=_model_name,
-                model_id=model_id,
-                api_base=_api_base,
-                api_provider=llm_provider,
-            )
-
-            prometheusLogger.increment_deployment_cooled_down(
-                litellm_model_name=_model_name,
-                model_id=model_id,
-                api_base=_api_base,
-                api_provider=llm_provider,
-                exception_status=str(exception_status),
-            )
+        prometheusLogger.increment_deployment_cooled_down(
+            litellm_model_name=_model_name,
+            model_id=model_id,
+            api_base=_api_base,
+            api_provider=llm_provider,
+            exception_status=str(exception_status),
+        )
 
     return
+
+
+def _get_prometheus_logger_from_callbacks() -> Optional[PrometheusLogger]:
+    """
+    Checks if prometheus is a initalized callback, if yes returns it
+    """
+    try:
+        from litellm_enterprise.integrations.prometheus import PrometheusLogger
+    except Exception:
+        PrometheusLogger = None
+
+    if PrometheusLogger is None:
+        return None
+
+    for _callback in litellm._async_success_callback:
+        if isinstance(_callback, PrometheusLogger):
+            return _callback
+    for global_callback in litellm.callbacks:
+        if isinstance(global_callback, PrometheusLogger):
+            return global_callback
+
+    return None

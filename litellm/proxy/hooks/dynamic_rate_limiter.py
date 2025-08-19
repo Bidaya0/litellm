@@ -4,9 +4,6 @@
 
 import asyncio
 import os
-import sys
-import traceback
-from datetime import datetime
 from typing import List, Literal, Optional, Tuple, Union
 
 from fastapi import HTTPException
@@ -14,7 +11,7 @@ from fastapi import HTTPException
 import litellm
 from litellm import ModelResponse, Router
 from litellm._logging import verbose_proxy_logger
-from litellm.caching import DualCache
+from litellm.caching.caching import DualCache
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.proxy._types import UserAPIKeyAuth
 from litellm.types.router import ModelGroupInfo
@@ -74,7 +71,6 @@ class DynamicRateLimiterCache:
 
 
 class _PROXY_DynamicRateLimitHandler(CustomLogger):
-
     # Class variables or attributes
     def __init__(self, internal_usage_cache: DualCache):
         self.internal_usage_cache = DynamicRateLimiterCache(cache=internal_usage_cache)
@@ -124,12 +120,13 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
             active_projects = await self.internal_usage_cache.async_get_cache(
                 model=model
             )
-            current_model_tpm, current_model_rpm = (
-                await self.llm_router.get_model_group_usage(model_group=model)
-            )
-            model_group_info: Optional[ModelGroupInfo] = (
-                self.llm_router.get_model_group_info(model_group=model)
-            )
+            (
+                current_model_tpm,
+                current_model_rpm,
+            ) = await self.llm_router.get_model_group_usage(model_group=model)
+            model_group_info: Optional[
+                ModelGroupInfo
+            ] = self.llm_router.get_model_group_info(model_group=model)
             total_model_tpm: Optional[int] = None
             total_model_rpm: Optional[int] = None
             if model_group_info is not None:
@@ -200,6 +197,7 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
             "audio_transcription",
             "pass_through_endpoint",
             "rerank",
+            "mcp_call",
         ],
     ) -> Optional[
         Union[Exception, str, dict]
@@ -213,10 +211,14 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
             key_priority: Optional[str] = user_api_key_dict.metadata.get(
                 "priority", None
             )
-            available_tpm, available_rpm, model_tpm, model_rpm, active_projects = (
-                await self.check_available_usage(
-                    model=data["model"], priority=key_priority
-                )
+            (
+                available_tpm,
+                available_rpm,
+                model_tpm,
+                model_rpm,
+                active_projects,
+            ) = await self.check_available_usage(
+                model=data["model"], priority=key_priority
             )
             ### CHECK TPM ###
             if available_tpm is not None and available_tpm == 0:
@@ -270,21 +272,25 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                 key_priority: Optional[str] = user_api_key_dict.metadata.get(
                     "priority", None
                 )
-                available_tpm, available_rpm, model_tpm, model_rpm, active_projects = (
-                    await self.check_available_usage(
-                        model=model_info["model_name"], priority=key_priority
-                    )
+                (
+                    available_tpm,
+                    available_rpm,
+                    model_tpm,
+                    model_rpm,
+                    active_projects,
+                ) = await self.check_available_usage(
+                    model=model_info["model_name"], priority=key_priority
                 )
-                response._hidden_params["additional_headers"] = (
-                    {  # Add additional response headers - easier debugging
-                        "x-litellm-model_group": model_info["model_name"],
-                        "x-ratelimit-remaining-litellm-project-tokens": available_tpm,
-                        "x-ratelimit-remaining-litellm-project-requests": available_rpm,
-                        "x-ratelimit-remaining-model-tokens": model_tpm,
-                        "x-ratelimit-remaining-model-requests": model_rpm,
-                        "x-ratelimit-current-active-projects": active_projects,
-                    }
-                )
+                response._hidden_params[
+                    "additional_headers"
+                ] = {  # Add additional response headers - easier debugging
+                    "x-litellm-model_group": model_info["model_name"],
+                    "x-ratelimit-remaining-litellm-project-tokens": available_tpm,
+                    "x-ratelimit-remaining-litellm-project-requests": available_rpm,
+                    "x-ratelimit-remaining-model-tokens": model_tpm,
+                    "x-ratelimit-remaining-model-requests": model_rpm,
+                    "x-ratelimit-current-active-projects": active_projects,
+                }
 
                 return response
             return await super().async_post_call_success_hook(

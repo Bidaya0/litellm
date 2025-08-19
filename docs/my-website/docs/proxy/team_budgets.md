@@ -2,7 +2,7 @@ import Image from '@theme/IdealImage';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# 💰 Setting Team Budgets
+# Setting Team Budgets
 
 Track spend, set budgets for your Internal Team
 
@@ -56,7 +56,7 @@ Possible values for `budget_duration`
 | `budget_duration="1m"` | every 1 min |
 | `budget_duration="1h"` | every 1 hour |
 | `budget_duration="1d"` | every 1 day |
-| `budget_duration="1mo"` | every 1 month |
+| `budget_duration="30d"` | every 1 month |
 
 
 ### 2. Create a key for the `team`
@@ -318,7 +318,7 @@ curl -X POST 'http://0.0.0.0:4000/key/generate' \
 curl -X POST 'http://0.0.0.0:4000/chat/completions' \
   -H 'Content-Type: application/json' \
   -H 'Authorization: sk-...' \ # 👈 key from step 2.
-  -D '{
+  -d '{
   "model": "gpt-3.5-turbo",
   "messages": [
       {

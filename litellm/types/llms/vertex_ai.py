@@ -1,11 +1,12 @@
 import json
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from typing_extensions import (
     Protocol,
     Required,
     Self,
+    TypedDict,
     TypeGuard,
     get_origin,
     override,
@@ -13,23 +14,14 @@ from typing_extensions import (
 )
 
 
-class Field(TypedDict):
-    key: str
-    value: Dict[str, Any]
-
-
-class FunctionCallArgs(TypedDict):
-    fields: Field
-
-
 class FunctionResponse(TypedDict):
     name: str
-    response: FunctionCallArgs
+    response: Optional[dict]
 
 
 class FunctionCall(TypedDict):
     name: str
-    args: FunctionCallArgs
+    args: Optional[dict]
 
 
 class FileDataType(TypedDict):
@@ -48,6 +40,7 @@ class PartType(TypedDict, total=False):
     file_data: FileDataType
     function_call: FunctionCall
     function_response: FunctionResponse
+    thought: bool
 
 
 class HttpxFunctionCall(TypedDict):
@@ -55,17 +48,35 @@ class HttpxFunctionCall(TypedDict):
     args: dict
 
 
+class HttpxExecutableCode(TypedDict):
+    code: str
+    language: str
+
+
+class HttpxCodeExecutionResult(TypedDict):
+    outcome: str
+    output: str
+
+
+class HttpxBlobType(TypedDict):
+    mimeType: str
+    data: str
+
+
 class HttpxPartType(TypedDict, total=False):
     text: str
-    inline_data: BlobType
-    file_data: FileDataType
+    inlineData: HttpxBlobType
+    fileData: FileDataType
     functionCall: HttpxFunctionCall
-    function_response: FunctionResponse
+    functionResponse: FunctionResponse
+    executableCode: HttpxExecutableCode
+    codeExecutionResult: HttpxCodeExecutionResult
+    thought: bool
 
 
 class HttpxContentType(TypedDict, total=False):
     role: Literal["user", "model"]
-    parts: Required[List[HttpxPartType]]
+    parts: List[HttpxPartType]
 
 
 class ContentType(TypedDict, total=False):
@@ -79,12 +90,27 @@ class SystemInstructions(TypedDict):
 
 class Schema(TypedDict, total=False):
     type: Literal["STRING", "INTEGER", "BOOLEAN", "NUMBER", "ARRAY", "OBJECT"]
+    format: Literal["enum", "date-time"]
+    title: str
     description: str
-    enum: List[str]
-    items: List["Schema"]
-    properties: "Schema"
-    required: List[str]
     nullable: bool
+    default: Any
+    items: "Schema"
+    minItems: str
+    maxItems: str
+    enum: List[str]
+    properties: Dict[str, "Schema"]
+    propertyOrdering: List[str]
+    required: List[str]
+    minProperties: str
+    maxProperties: str
+    minimum: float
+    maximum: float
+    minLength: str
+    maxLength: str
+    pattern: str
+    example: Any
+    anyOf: List["Schema"]
 
 
 class FunctionDeclaration(TypedDict, total=False):
@@ -143,6 +169,26 @@ class SafetSettingsConfig(TypedDict, total=False):
     method: HarmBlockMethod
 
 
+class GeminiThinkingConfig(TypedDict, total=False):
+    includeThoughts: bool
+    thinkingBudget: int
+
+
+GeminiResponseModalities = Literal["TEXT", "IMAGE", "AUDIO", "VIDEO"]
+
+
+class PrebuiltVoiceConfig(TypedDict):
+    voiceName: str
+
+
+class VoiceConfig(TypedDict):
+    prebuiltVoiceConfig: PrebuiltVoiceConfig
+
+
+class SpeechConfig(TypedDict, total=False):
+    voiceConfig: VoiceConfig
+
+
 class GenerationConfig(TypedDict, total=False):
     temperature: float
     top_p: float
@@ -155,11 +201,19 @@ class GenerationConfig(TypedDict, total=False):
     response_mime_type: Literal["text/plain", "application/json"]
     response_schema: dict
     seed: int
+    responseLogprobs: bool
+    logprobs: int
+    responseModalities: List[GeminiResponseModalities]
+    thinkingConfig: GeminiThinkingConfig
 
 
 class Tools(TypedDict, total=False):
     function_declarations: List[FunctionDeclaration]
+    googleSearch: dict
     googleSearchRetrieval: dict
+    enterpriseWebSearch: dict
+    url_context: dict
+    code_execution: dict
     retrieval: Retrieval
 
 
@@ -172,10 +226,31 @@ class TTL(TypedDict, total=False):
     nano: float
 
 
+class PromptTokensDetails(TypedDict):
+    modality: Literal["TEXT", "AUDIO", "IMAGE", "VIDEO"]
+    tokenCount: int
+
+
 class UsageMetadata(TypedDict, total=False):
     promptTokenCount: int
     totalTokenCount: int
     candidatesTokenCount: int
+    responseTokenCount: int
+    cachedContentTokenCount: int
+    promptTokensDetails: List[PromptTokensDetails]
+    thoughtsTokenCount: int
+    responseTokensDetails: List[PromptTokensDetails]
+
+
+class TokenCountDetailsResponse(TypedDict):
+    """
+    Response structure for token count details with modality breakdown.
+    
+    Example:
+        {'totalTokens': 12, 'promptTokensDetails': [{'modality': 'TEXT', 'tokenCount': 12}]}
+    """
+    totalTokens: int
+    promptTokensDetails: List[PromptTokensDetails]
 
 
 class CachedContent(TypedDict, total=False):
@@ -202,6 +277,7 @@ class RequestBody(TypedDict, total=False):
     safetySettings: List[SafetSettingsConfig]
     generationConfig: GenerationConfig
     cachedContent: str
+    speechConfig: SpeechConfig
 
 
 class CachedContentRequestBody(TypedDict, total=False):
@@ -257,6 +333,30 @@ class GroundingMetadata(TypedDict, total=False):
     groundingAttributions: List[dict]
 
 
+class LogprobsCandidate(TypedDict):
+    token: str
+    tokenId: int
+    logProbability: float
+
+
+class LogprobsTopCandidate(TypedDict):
+    candidates: List[LogprobsCandidate]
+
+
+class LogprobsResult(TypedDict, total=False):
+    topCandidates: List[LogprobsTopCandidate]
+    chosenCandidates: List[LogprobsCandidate]
+
+
+class UrlMetadata(TypedDict, total=False):
+    retrievedUrl: str
+    urlRetrievalStatus: str
+
+
+class UrlContextMetadata(TypedDict, total=False):
+    urlMetadata: List[UrlMetadata]
+
+
 class Candidates(TypedDict, total=False):
     index: int
     content: HttpxContentType
@@ -275,6 +375,8 @@ class Candidates(TypedDict, total=False):
     citationMetadata: CitationMetadata
     groundingMetadata: GroundingMetadata
     finishMessage: str
+    logprobsResult: LogprobsResult
+    urlContextMetadata: UrlContextMetadata
 
 
 class PromptFeedback(TypedDict):
@@ -287,14 +389,12 @@ class GenerateContentResponseBody(TypedDict, total=False):
     candidates: List[Candidates]
     promptFeedback: PromptFeedback
     usageMetadata: Required[UsageMetadata]
+    responseId: str
 
 
-class FineTunesupervisedTuningSpec(TypedDict, total=False):
-    training_dataset_uri: str
-    validation_dataset: Optional[str]
+class FineTuneHyperparameters(TypedDict, total=False):
     epoch_count: Optional[int]
     learning_rate_multiplier: Optional[float]
-    tuned_model_display_name: Optional[str]
     adapter_size: Optional[
         Literal[
             "ADAPTER_SIZE_UNSPECIFIED",
@@ -306,14 +406,22 @@ class FineTunesupervisedTuningSpec(TypedDict, total=False):
     ]
 
 
+class FineTunesupervisedTuningSpec(TypedDict, total=False):
+    training_dataset_uri: str
+    validation_dataset: Optional[str]
+    tuned_model_display_name: Optional[str]
+    hyperParameters: Optional[FineTuneHyperparameters]
+
+
 class FineTuneJobCreate(TypedDict, total=False):
     baseModel: str
     supervisedTuningSpec: FineTunesupervisedTuningSpec
     tunedModelDisplayName: Optional[str]
 
 
-class ResponseSupervisedTuningSpec(TypedDict):
+class ResponseSupervisedTuningSpec(TypedDict, total=False):
     trainingDatasetUri: Optional[str]
+    hyperParameters: Optional[FineTuneHyperparameters]
 
 
 class ResponseTuningJob(TypedDict):
@@ -334,9 +442,15 @@ class ResponseTuningJob(TypedDict):
     updateTime: Optional[str]
 
 
+class VideoSegmentConfig(TypedDict, total=False):
+    startOffsetSec: int
+    endOffsetSec: int
+    intervalSec: int
+
+
 class InstanceVideo(TypedDict, total=False):
     gcsUri: str
-    videoSegmentConfig: Tuple[float, float, float]
+    videoSegmentConfig: VideoSegmentConfig
 
 
 class InstanceImage(TypedDict, total=False):
@@ -351,7 +465,7 @@ class Instance(TypedDict, total=False):
     video: InstanceVideo
 
 
-class VertexMultimodalEmbeddingRequest(TypedDict, total=False):
+class VertexMultimodalEmbeddingRequest(TypedDict):
     instances: List[Instance]
 
 
@@ -367,7 +481,7 @@ class MultimodalPrediction(TypedDict, total=False):
     videoEmbeddings: List[VideoEmbedding]
 
 
-class MultimodalPredictions(TypedDict, total=False):
+class MultimodalPredictions(TypedDict):
     predictions: List[MultimodalPrediction]
 
 
@@ -412,3 +526,98 @@ class VertexAIBatchEmbeddingsRequestBody(TypedDict, total=False):
 
 class VertexAIBatchEmbeddingsResponseObject(TypedDict):
     embeddings: List[ContentEmbeddings]
+
+
+# Vertex AI Batch Prediction
+
+
+class GcsSource(TypedDict):
+    uris: str
+
+
+class InputConfig(TypedDict):
+    instancesFormat: str
+    gcsSource: GcsSource
+
+
+class GcsDestination(TypedDict):
+    outputUriPrefix: str
+
+
+class OutputConfig(TypedDict, total=False):
+    predictionsFormat: str
+    gcsDestination: GcsDestination
+
+
+class GcsBucketResponse(TypedDict):
+    """
+    TypedDict for GCS bucket upload response
+
+    Attributes:
+        kind: The kind of item this is. For objects, this is always storage#object
+        id: The ID of the object
+        selfLink: The link to this object
+        mediaLink: The link to download the object
+        name: The name of the object
+        bucket: The name of the bucket containing this object
+        generation: The content generation of this object
+        metageneration: The metadata generation of this object
+        contentType: The content type of the object
+        storageClass: The storage class of the object
+        size: The size of the object in bytes
+        md5Hash: The MD5 hash of the object
+        crc32c: The CRC32c checksum of the object
+        etag: The ETag of the object
+        timeCreated: The creation time of the object
+        updated: The last update time of the object
+        timeStorageClassUpdated: The time the storage class was last updated
+        timeFinalized: The time the object was finalized
+    """
+
+    kind: Literal["storage#object"]
+    id: str
+    selfLink: str
+    mediaLink: str
+    name: str
+    bucket: str
+    generation: str
+    metageneration: str
+    contentType: str
+    storageClass: str
+    size: str
+    md5Hash: str
+    crc32c: str
+    etag: str
+    timeCreated: str
+    updated: str
+    timeStorageClassUpdated: str
+    timeFinalized: str
+
+
+class VertexAIBatchPredictionJob(TypedDict):
+    displayName: str
+    model: str
+    inputConfig: InputConfig
+    outputConfig: OutputConfig
+
+
+class VertexBatchPredictionResponse(TypedDict, total=False):
+    name: str
+    displayName: str
+    model: str
+    inputConfig: InputConfig
+    outputConfig: OutputConfig
+    state: str
+    createTime: str
+    updateTime: str
+    modelVersionId: str
+
+
+VERTEX_CREDENTIALS_TYPES = Union[str, Dict[str, str]]
+
+
+class VertexPartnerProvider(str, Enum):
+    mistralai = "mistralai"
+    llama = "llama"
+    ai21 = "ai21"
+    claude = "claude"

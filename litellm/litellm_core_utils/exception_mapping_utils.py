@@ -1,31 +1,76 @@
 import json
-import os
-import threading
 import traceback
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
 import litellm
-from litellm import verbose_logger
+from litellm._logging import verbose_logger
 
 from ..exceptions import (
     APIConnectionError,
     APIError,
     AuthenticationError,
     BadRequestError,
-    BudgetExceededError,
     ContentPolicyViolationError,
     ContextWindowExceededError,
+    InternalServerError,
     NotFoundError,
-    OpenAIError,
     PermissionDeniedError,
     RateLimitError,
     ServiceUnavailableError,
     Timeout,
     UnprocessableEntityError,
-    UnsupportedParamsError,
 )
+
+
+class ExceptionCheckers:
+    """
+    Helper class for checking various error conditions in exception strings.
+    """
+
+    @staticmethod
+    def is_error_str_rate_limit(error_str: str) -> bool:
+        """
+        Check if an error string indicates a rate limit error.
+
+        Args:
+            error_str: The error string to check
+
+        Returns:
+            True if the error indicates a rate limit, False otherwise
+        """
+        if not isinstance(error_str, str):
+            return False
+        
+        if "429" in error_str or "rate limit" in error_str.lower():
+            return True
+        
+        #######################################
+        # Mistral API returns this error string
+        #########################################
+        if "service tier capacity exceeded" in error_str.lower():
+            return True
+        
+        return False
+
+    @staticmethod
+    def is_error_str_context_window_exceeded(error_str: str) -> bool:
+        """
+        Check if an error string indicates a context window exceeded error.
+        """
+        _error_str_lowercase = error_str.lower()
+        known_exception_substrings = [
+            "exceed context limit",
+            "this model's maximum context length is",
+            "string too long. expected a string with maximum length",
+            "model's maximum context limit",
+            "is longer than the model's context length",
+        ]
+        for substring in known_exception_substrings:
+            if substring in _error_str_lowercase:
+                return True
+        return False
 
 
 def get_error_message(error_obj) -> Optional[str]:
@@ -67,25 +112,6 @@ def get_error_message(error_obj) -> Optional[str]:
 
 
 ####### EXCEPTION MAPPING ################
-def _get_litellm_response_headers(
-    original_exception: Exception,
-) -> Optional[httpx.Headers]:
-    """
-    Extract and return the response headers from a mapped exception, if present.
-
-    Used for accurate retry logic.
-    """
-    _response_headers: Optional[httpx.Headers] = None
-    try:
-        _response_headers = getattr(
-            original_exception, "litellm_response_headers", None
-        )
-    except Exception:
-        return None
-
-    return _response_headers
-
-
 def _get_response_headers(original_exception: Exception) -> Optional[httpx.Headers]:
     """
     Extract and return the response headers from an exception, if present.
@@ -96,22 +122,61 @@ def _get_response_headers(original_exception: Exception) -> Optional[httpx.Heade
     try:
         _response_headers = getattr(original_exception, "headers", None)
         error_response = getattr(original_exception, "response", None)
-        if _response_headers is None and error_response:
+        if not _response_headers and error_response:
             _response_headers = getattr(error_response, "headers", None)
+        if not _response_headers:
+            _response_headers = getattr(
+                original_exception, "litellm_response_headers", None
+            )
     except Exception:
         return None
 
     return _response_headers
 
 
-def exception_type(  # type: ignore
+import re
+
+
+def extract_and_raise_litellm_exception(
+    response: Optional[Any],
+    error_str: str,
+    model: str,
+    custom_llm_provider: str,
+):
+    """
+    Covers scenario where litellm sdk calling proxy.
+
+    Enables raising the special errors raised by litellm, eg. ContextWindowExceededError.
+
+    Relevant Issue: https://github.com/BerriAI/litellm/issues/7259
+    """
+    pattern = r"litellm\.\w+Error"
+
+    # Search for the exception in the error string
+    match = re.search(pattern, error_str)
+
+    # Extract the exception if found
+    if match:
+        exception_name = match.group(0)
+        exception_name = exception_name.strip().replace("litellm.", "")
+        raised_exception_obj = getattr(litellm, exception_name, None)
+        if raised_exception_obj:
+            raise raised_exception_obj(
+                message=error_str,
+                llm_provider=custom_llm_provider,
+                model=model,
+                response=response,
+            )
+
+
+def exception_type(  # type: ignore  # noqa: PLR0915
     model,
     original_exception,
     custom_llm_provider,
     completion_kwargs={},
     extra_kwargs={},
 ):
-
+    """Maps an LLM Provider Exception to OpenAI Exception Format"""
     if any(
         isinstance(original_exception, exc_type)
         for exc_type in litellm.LITELLM_EXCEPTION_TYPES
@@ -125,7 +190,7 @@ def exception_type(  # type: ignore
             "\033[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new\033[0m"  # noqa
         )  # noqa
         print(  # noqa
-            "LiteLLM.Info: If you need to debug this error, use `litellm.set_verbose=True'."  # noqa
+            "LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'."  # noqa
         )  # noqa
         print()  # noqa
 
@@ -133,11 +198,10 @@ def exception_type(  # type: ignore
         original_exception=original_exception
     )
     try:
+        error_str = str(original_exception)
         if model:
             if hasattr(original_exception, "message"):
                 error_str = str(original_exception.message)
-            else:
-                error_str = str(original_exception)
             if isinstance(original_exception, BaseException):
                 exception_type = type(original_exception).__name__
             else:
@@ -204,20 +268,36 @@ def exception_type(  # type: ignore
             #################### Start of Provider Exception mapping ####################
             ################################################################################
 
-            if "Request Timeout Error" in error_str or "Request timed out" in error_str:
+            if (
+                "Request Timeout Error" in error_str
+                or "Request timed out" in error_str
+                or "Timed out generating response" in error_str
+                or "The read operation timed out" in error_str
+            ):
                 exception_mapping_worked = True
+
                 raise Timeout(
-                    message=f"APITimeoutError - Request timed out. \nerror_str: {error_str}",
+                    message=f"APITimeoutError - Request timed out. Error_str: {error_str}",
                     model=model,
                     llm_provider=custom_llm_provider,
                     litellm_debug_info=extra_information,
                 )
 
             if (
+                custom_llm_provider == "litellm_proxy"
+            ):  # handle special case where calling litellm proxy + exception str contains error message
+                extract_and_raise_litellm_exception(
+                    response=getattr(original_exception, "response", None),
+                    error_str=error_str,
+                    model=model,
+                    custom_llm_provider=custom_llm_provider,
+                )
+            if (
                 custom_llm_provider == "openai"
                 or custom_llm_provider == "text-completion-openai"
                 or custom_llm_provider == "custom_openai"
                 or custom_llm_provider in litellm.openai_compatible_providers
+                or custom_llm_provider == "mistral"
             ):
                 # custom_llm_provider is openai, make it OpenAI
                 message = get_error_message(error_obj=original_exception)
@@ -244,17 +324,21 @@ def exception_type(  # type: ignore
                         + "Exception"
                     )
 
-                if (
-                    "This model's maximum context length is" in error_str
-                    or "string too long. Expected a string with maximum length"
-                    in error_str
-                ):
+                if ExceptionCheckers.is_error_str_rate_limit(error_str):
+                    exception_mapping_worked = True
+                    raise RateLimitError(
+                        message=f"RateLimitError: {exception_provider} - {message}",
+                        model=model,
+                        llm_provider=custom_llm_provider,
+                        response=getattr(original_exception, "response", None),
+                    )
+                elif ExceptionCheckers.is_error_str_context_window_exceeded(error_str):
                     exception_mapping_worked = True
                     raise ContextWindowExceededError(
                         message=f"ContextWindowExceededError: {exception_provider} - {message}",
                         llm_provider=custom_llm_provider,
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                         litellm_debug_info=extra_information,
                     )
                 elif (
@@ -266,7 +350,7 @@ def exception_type(  # type: ignore
                         message=f"{exception_provider} - {message}",
                         llm_provider=custom_llm_provider,
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                         litellm_debug_info=extra_information,
                     )
                 elif "A timeout occurred" in error_str:
@@ -278,15 +362,25 @@ def exception_type(  # type: ignore
                         litellm_debug_info=extra_information,
                     )
                 elif (
-                    "invalid_request_error" in error_str
-                    and "content_policy_violation" in error_str
+                    (
+                        "invalid_request_error" in error_str
+                        and "content_policy_violation" in error_str
+                    )
+                    or (
+                        "Invalid prompt" in error_str
+                        and "violating our usage policy" in error_str
+                    )
+                    or (
+                        "request was rejected as a result of the safety system"
+                        in error_str.lower()
+                    )
                 ):
                     exception_mapping_worked = True
                     raise ContentPolicyViolationError(
                         message=f"ContentPolicyViolationError: {exception_provider} - {message}",
                         llm_provider=custom_llm_provider,
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                         litellm_debug_info=extra_information,
                     )
                 elif (
@@ -298,10 +392,14 @@ def exception_type(  # type: ignore
                         message=f"{exception_provider} - {message}",
                         llm_provider=custom_llm_provider,
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                         litellm_debug_info=extra_information,
+                        body=getattr(original_exception, "body", None),
                     )
-                elif "Web server is returning an unknown error" in error_str:
+                elif (
+                    "Web server is returning an unknown error" in error_str
+                    or "The server had an error processing your request." in error_str
+                ):
                     exception_mapping_worked = True
                     raise litellm.InternalServerError(
                         message=f"{exception_provider} - {message}",
@@ -314,7 +412,7 @@ def exception_type(  # type: ignore
                         message=f"RateLimitError: {exception_provider} - {message}",
                         model=model,
                         llm_provider=custom_llm_provider,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                         litellm_debug_info=extra_information,
                     )
                 elif (
@@ -326,7 +424,7 @@ def exception_type(  # type: ignore
                         message=f"AuthenticationError: {exception_provider} - {message}",
                         llm_provider=custom_llm_provider,
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                         litellm_debug_info=extra_information,
                     )
                 elif "Mistral API raised a streaming error" in error_str:
@@ -350,7 +448,7 @@ def exception_type(  # type: ignore
                             message=f"{exception_provider} - {message}",
                             llm_provider=custom_llm_provider,
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 401:
@@ -359,7 +457,7 @@ def exception_type(  # type: ignore
                             message=f"AuthenticationError: {exception_provider} - {message}",
                             llm_provider=custom_llm_provider,
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 404:
@@ -368,7 +466,7 @@ def exception_type(  # type: ignore
                             message=f"NotFoundError: {exception_provider} - {message}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 408:
@@ -387,11 +485,21 @@ def exception_type(  # type: ignore
                             llm_provider=custom_llm_provider,
                             response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
+                            body=getattr(original_exception, "body", None),
                         )
                     elif original_exception.status_code == 429:
                         exception_mapping_worked = True
                         raise RateLimitError(
                             message=f"RateLimitError: {exception_provider} - {message}",
+                            model=model,
+                            llm_provider=custom_llm_provider,
+                            response=getattr(original_exception, "response", None),
+                            litellm_debug_info=extra_information,
+                        )
+                    elif original_exception.status_code == 500:
+                        exception_mapping_worked = True
+                        raise InternalServerError(
+                            message=f"InternalServerError: {exception_provider} - {message}",
                             model=model,
                             llm_provider=custom_llm_provider,
                             response=getattr(original_exception, "response", None),
@@ -413,6 +521,7 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider=custom_llm_provider,
                             litellm_debug_info=extra_information,
+                            exception_status_code=original_exception.status_code,
                         )
                     else:
                         exception_mapping_worked = True
@@ -436,10 +545,20 @@ def exception_type(  # type: ignore
                             method="POST", url="https://api.openai.com/v1/"
                         ),
                     )
-            elif custom_llm_provider == "anthropic":  # one of the anthropics
+            elif (
+                custom_llm_provider == "anthropic"
+                or custom_llm_provider == "anthropic_text"
+            ):  # one of the anthropics
                 if "prompt is too long" in error_str or "prompt: length" in error_str:
                     exception_mapping_worked = True
                     raise ContextWindowExceededError(
+                        message="AnthropicError - {}".format(error_str),
+                        model=model,
+                        llm_provider="anthropic",
+                    )
+                elif "overloaded_error" in error_str:
+                    exception_mapping_worked = True
+                    raise InternalServerError(
                         message="AnthropicError - {}".format(error_str),
                         model=model,
                         llm_provider="anthropic",
@@ -531,7 +650,7 @@ def exception_type(  # type: ignore
                         message=f"ReplicateException - {error_str}",
                         llm_provider="replicate",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "input is too long" in error_str:
                     exception_mapping_worked = True
@@ -539,7 +658,7 @@ def exception_type(  # type: ignore
                         message=f"ReplicateException - {error_str}",
                         model=model,
                         llm_provider="replicate",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif exception_type == "ModelError":
                     exception_mapping_worked = True
@@ -547,7 +666,7 @@ def exception_type(  # type: ignore
                         message=f"ReplicateException - {error_str}",
                         model=model,
                         llm_provider="replicate",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Request was throttled" in error_str:
                     exception_mapping_worked = True
@@ -555,7 +674,7 @@ def exception_type(  # type: ignore
                         message=f"ReplicateException - {error_str}",
                         llm_provider="replicate",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif hasattr(original_exception, "status_code"):
                     if original_exception.status_code == 401:
@@ -564,7 +683,7 @@ def exception_type(  # type: ignore
                             message=f"ReplicateException - {original_exception.message}",
                             llm_provider="replicate",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif (
                         original_exception.status_code == 400
@@ -575,7 +694,7 @@ def exception_type(  # type: ignore
                             message=f"ReplicateException - {original_exception.message}",
                             model=model,
                             llm_provider="replicate",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 422:
                         exception_mapping_worked = True
@@ -583,7 +702,7 @@ def exception_type(  # type: ignore
                             message=f"ReplicateException - {original_exception.message}",
                             model=model,
                             llm_provider="replicate",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 408:
                         exception_mapping_worked = True
@@ -598,7 +717,7 @@ def exception_type(  # type: ignore
                             message=f"ReplicateException - {original_exception.message}",
                             llm_provider="replicate",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 429:
                         exception_mapping_worked = True
@@ -606,7 +725,7 @@ def exception_type(  # type: ignore
                             message=f"ReplicateException - {original_exception.message}",
                             llm_provider="replicate",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 500:
                         exception_mapping_worked = True
@@ -614,7 +733,7 @@ def exception_type(  # type: ignore
                             message=f"ReplicateException - {original_exception.message}",
                             llm_provider="replicate",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                 exception_mapping_worked = True
                 raise APIError(
@@ -627,19 +746,7 @@ def exception_type(  # type: ignore
                         url="https://api.replicate.com/v1/deployments",
                     ),
                 )
-            elif custom_llm_provider == "watsonx":
-                if "token_quota_reached" in error_str:
-                    exception_mapping_worked = True
-                    raise RateLimitError(
-                        message=f"WatsonxException: Rate Limit Errror - {error_str}",
-                        llm_provider="watsonx",
-                        model=model,
-                        response=original_exception.response,
-                    )
-            elif (
-                custom_llm_provider == "predibase"
-                or custom_llm_provider == "databricks"
-            ):
+            elif custom_llm_provider in litellm._openai_like_providers:
                 if "authorization denied for" in error_str:
                     exception_mapping_worked = True
 
@@ -658,8 +765,40 @@ def exception_type(  # type: ignore
                         message=f"{custom_llm_provider}Exception: Authentication Error - {error_str}",
                         llm_provider=custom_llm_provider,
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                         litellm_debug_info=extra_information,
+                    )
+                elif "model's maximum context limit" in error_str:
+                    exception_mapping_worked = True
+                    raise ContextWindowExceededError(
+                        message=f"{custom_llm_provider}Exception: Context Window Error - {error_str}",
+                        model=model,
+                        llm_provider=custom_llm_provider,
+                    )
+                elif "token_quota_reached" in error_str:
+                    exception_mapping_worked = True
+                    raise RateLimitError(
+                        message=f"{custom_llm_provider}Exception: Rate Limit Errror - {error_str}",
+                        llm_provider=custom_llm_provider,
+                        model=model,
+                        response=getattr(original_exception, "response", None),
+                    )
+                elif (
+                    "The server received an invalid response from an upstream server."
+                    in error_str
+                ):
+                    exception_mapping_worked = True
+                    raise litellm.InternalServerError(
+                        message=f"{custom_llm_provider}Exception - {original_exception.message}",
+                        llm_provider=custom_llm_provider,
+                        model=model,
+                    )
+                elif "model_no_support_for_function" in error_str:
+                    exception_mapping_worked = True
+                    raise BadRequestError(
+                        message=f"{custom_llm_provider}Exception - Use 'watsonx_text' route instead. IBM WatsonX does not support `/text/chat` endpoint. - {error_str}",
+                        llm_provider=custom_llm_provider,
+                        model=model,
                     )
                 elif hasattr(original_exception, "status_code"):
                     if original_exception.status_code == 500:
@@ -735,12 +874,14 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider=custom_llm_provider,
                             litellm_debug_info=extra_information,
+                            exception_status_code=original_exception.status_code,
                         )
             elif custom_llm_provider == "bedrock":
                 if (
                     "too many tokens" in error_str
                     or "expected maxLength:" in error_str
                     or "Input is too long" in error_str
+                    or "prompt is too long" in error_str
                     or "prompt: length: 1.." in error_str
                     or "Too many input tokens" in error_str
                 ):
@@ -759,7 +900,7 @@ def exception_type(  # type: ignore
                         message=f"BedrockException - {error_str}\n. Enable 'litellm.modify_params=True' (for PROXY do: `litellm_settings::modify_params: True`) to insert a dummy assistant message and fix this error.",
                         model=model,
                         llm_provider="bedrock",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Malformed input request" in error_str:
                     exception_mapping_worked = True
@@ -767,7 +908,7 @@ def exception_type(  # type: ignore
                         message=f"BedrockException - {error_str}",
                         model=model,
                         llm_provider="bedrock",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "A conversation must start with a user message." in error_str:
                     exception_mapping_worked = True
@@ -775,7 +916,7 @@ def exception_type(  # type: ignore
                         message=f"BedrockException - {error_str}\n. Pass in default user message via `completion(..,user_continue_message=)` or enable `litellm.modify_params=True`.\nFor Proxy: do via `litellm_settings::modify_params: True` or user_continue_message under `litellm_params`",
                         model=model,
                         llm_provider="bedrock",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "Unable to locate credentials" in error_str
@@ -787,7 +928,7 @@ def exception_type(  # type: ignore
                         message=f"BedrockException Invalid Authentication - {error_str}",
                         model=model,
                         llm_provider="bedrock",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "AccessDeniedException" in error_str:
                     exception_mapping_worked = True
@@ -795,7 +936,7 @@ def exception_type(  # type: ignore
                         message=f"BedrockException PermissionDeniedError - {error_str}",
                         model=model,
                         llm_provider="bedrock",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "throttlingException" in error_str
@@ -806,7 +947,7 @@ def exception_type(  # type: ignore
                         message=f"BedrockException: Rate Limit Error - {error_str}",
                         model=model,
                         llm_provider="bedrock",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "Connect timeout on endpoint URL" in error_str
@@ -845,7 +986,7 @@ def exception_type(  # type: ignore
                             message=f"BedrockException - {original_exception.message}",
                             llm_provider="bedrock",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 400:
                         exception_mapping_worked = True
@@ -853,7 +994,7 @@ def exception_type(  # type: ignore
                             message=f"BedrockException - {original_exception.message}",
                             llm_provider="bedrock",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 404:
                         exception_mapping_worked = True
@@ -861,7 +1002,7 @@ def exception_type(  # type: ignore
                             message=f"BedrockException - {original_exception.message}",
                             llm_provider="bedrock",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 408:
                         exception_mapping_worked = True
@@ -877,7 +1018,7 @@ def exception_type(  # type: ignore
                             message=f"BedrockException - {original_exception.message}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 429:
@@ -886,7 +1027,7 @@ def exception_type(  # type: ignore
                             message=f"BedrockException - {original_exception.message}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 503:
@@ -895,7 +1036,7 @@ def exception_type(  # type: ignore
                             message=f"BedrockException - {original_exception.message}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 504:  # gateway timeout error
@@ -905,6 +1046,7 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider=custom_llm_provider,
                             litellm_debug_info=extra_information,
+                            exception_status_code=original_exception.status_code,
                         )
             elif (
                 custom_llm_provider == "sagemaker"
@@ -916,7 +1058,7 @@ def exception_type(  # type: ignore
                         message=f"litellm.BadRequestError: SagemakerException - {error_str}",
                         model=model,
                         llm_provider="sagemaker",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "Input validation error: `best_of` must be > 0 and <= 2"
@@ -927,7 +1069,7 @@ def exception_type(  # type: ignore
                         message="SagemakerException - the value of 'n' must be > 0 and <= 2 for sagemaker endpoints",
                         model=model,
                         llm_provider="sagemaker",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "`inputs` tokens + `max_new_tokens` must be <=" in error_str
@@ -938,7 +1080,7 @@ def exception_type(  # type: ignore
                         message=f"SagemakerException - {error_str}",
                         model=model,
                         llm_provider="sagemaker",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif hasattr(original_exception, "status_code"):
                     if original_exception.status_code == 500:
@@ -960,7 +1102,7 @@ def exception_type(  # type: ignore
                             message=f"SagemakerException - {original_exception.message}",
                             llm_provider=custom_llm_provider,
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 400:
                         exception_mapping_worked = True
@@ -968,7 +1110,7 @@ def exception_type(  # type: ignore
                             message=f"SagemakerException - {original_exception.message}",
                             llm_provider=custom_llm_provider,
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 404:
                         exception_mapping_worked = True
@@ -976,7 +1118,7 @@ def exception_type(  # type: ignore
                             message=f"SagemakerException - {original_exception.message}",
                             llm_provider=custom_llm_provider,
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 408:
                         exception_mapping_worked = True
@@ -995,7 +1137,7 @@ def exception_type(  # type: ignore
                             message=f"SagemakerException - {original_exception.message}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 429:
@@ -1004,7 +1146,7 @@ def exception_type(  # type: ignore
                             message=f"SagemakerException - {original_exception.message}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 503:
@@ -1013,7 +1155,7 @@ def exception_type(  # type: ignore
                             message=f"SagemakerException - {original_exception.message}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 504:  # gateway timeout error
@@ -1023,6 +1165,7 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider=custom_llm_provider,
                             litellm_debug_info=extra_information,
+                            exception_status_code=original_exception.status_code,
                         )
             elif (
                 custom_llm_provider == "vertex_ai"
@@ -1133,10 +1276,13 @@ def exception_type(  # type: ignore
                             ),
                         ),
                     )
-                elif "500 Internal Server Error" in error_str:
+                elif (
+                    "500 Internal Server Error" in error_str
+                    or "The model is overloaded." in error_str
+                ):
                     exception_mapping_worked = True
-                    raise ServiceUnavailableError(
-                        message=f"litellm.ServiceUnavailableError: VertexAIException - {error_str}",
+                    raise litellm.InternalServerError(
+                        message=f"litellm.InternalServerError: VertexAIException - {error_str}",
                         model=model,
                         llm_provider="vertex_ai",
                         litellm_debug_info=extra_information,
@@ -1223,7 +1369,7 @@ def exception_type(  # type: ignore
                         message="GeminiException - Invalid api key",
                         model=model,
                         llm_provider="palm",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 if (
                     "504 Deadline expired before operation could complete." in error_str
@@ -1234,6 +1380,7 @@ def exception_type(  # type: ignore
                         message=f"GeminiException - {original_exception.message}",
                         model=model,
                         llm_provider="palm",
+                        exception_status_code=original_exception.status_code,
                     )
                 if "400 Request payload size exceeds" in error_str:
                     exception_mapping_worked = True
@@ -1241,7 +1388,7 @@ def exception_type(  # type: ignore
                         message=f"GeminiException - {error_str}",
                         model=model,
                         llm_provider="palm",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 if (
                     "500 An internal error has occurred." in error_str
@@ -1268,7 +1415,7 @@ def exception_type(  # type: ignore
                             message=f"GeminiException - {error_str}",
                             model=model,
                             llm_provider="palm",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                 # Dailed: Error occurred: 400 Request payload size exceeds the limit: 20000 bytes
             elif custom_llm_provider == "cloudflare":
@@ -1278,7 +1425,7 @@ def exception_type(  # type: ignore
                         message=f"Cloudflare Exception - {original_exception.message}",
                         llm_provider="cloudflare",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 if "must have required property" in error_str:
                     exception_mapping_worked = True
@@ -1286,7 +1433,7 @@ def exception_type(  # type: ignore
                         message=f"Cloudflare Exception - {original_exception.message}",
                         llm_provider="cloudflare",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
             elif (
                 custom_llm_provider == "cohere" or custom_llm_provider == "cohere_chat"
@@ -1300,7 +1447,7 @@ def exception_type(  # type: ignore
                         message=f"CohereException - {original_exception.message}",
                         llm_provider="cohere",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "too many tokens" in error_str:
                     exception_mapping_worked = True
@@ -1308,7 +1455,15 @@ def exception_type(  # type: ignore
                         message=f"CohereException - {original_exception.message}",
                         model=model,
                         llm_provider="cohere",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
+                    )
+                elif "internal server error" in error_str.lower():
+                    exception_mapping_worked = True
+                    raise InternalServerError(
+                        message=f"CohereException - {error_str}",
+                        model=model,
+                        llm_provider="cohere",
+                        response=getattr(original_exception, "response", None),
                     )
                 elif hasattr(original_exception, "status_code"):
                     if (
@@ -1320,7 +1475,7 @@ def exception_type(  # type: ignore
                             message=f"CohereException - {original_exception.message}",
                             llm_provider="cohere",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 408:
                         exception_mapping_worked = True
@@ -1331,11 +1486,11 @@ def exception_type(  # type: ignore
                         )
                     elif original_exception.status_code == 500:
                         exception_mapping_worked = True
-                        raise ServiceUnavailableError(
+                        raise InternalServerError(
                             message=f"CohereException - {original_exception.message}",
                             llm_provider="cohere",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                 elif (
                     "CohereConnectionError" in exception_type
@@ -1345,7 +1500,7 @@ def exception_type(  # type: ignore
                         message=f"CohereException - {original_exception.message}",
                         llm_provider="cohere",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "invalid type:" in error_str:
                     exception_mapping_worked = True
@@ -1353,15 +1508,15 @@ def exception_type(  # type: ignore
                         message=f"CohereException - {original_exception.message}",
                         llm_provider="cohere",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Unexpected server error" in error_str:
                     exception_mapping_worked = True
-                    raise ServiceUnavailableError(
+                    raise InternalServerError(
                         message=f"CohereException - {original_exception.message}",
                         llm_provider="cohere",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 else:
                     if hasattr(original_exception, "status_code"):
@@ -1381,7 +1536,7 @@ def exception_type(  # type: ignore
                         message=error_str,
                         model=model,
                         llm_provider="huggingface",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "A valid user token is required" in error_str:
                     exception_mapping_worked = True
@@ -1389,7 +1544,7 @@ def exception_type(  # type: ignore
                         message=error_str,
                         llm_provider="huggingface",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Rate limit reached" in error_str:
                     exception_mapping_worked = True
@@ -1397,7 +1552,7 @@ def exception_type(  # type: ignore
                         message=error_str,
                         llm_provider="huggingface",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 if hasattr(original_exception, "status_code"):
                     if original_exception.status_code == 401:
@@ -1406,7 +1561,7 @@ def exception_type(  # type: ignore
                             message=f"HuggingfaceException - {original_exception.message}",
                             llm_provider="huggingface",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 400:
                         exception_mapping_worked = True
@@ -1414,7 +1569,7 @@ def exception_type(  # type: ignore
                             message=f"HuggingfaceException - {original_exception.message}",
                             model=model,
                             llm_provider="huggingface",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 408:
                         exception_mapping_worked = True
@@ -1429,7 +1584,7 @@ def exception_type(  # type: ignore
                             message=f"HuggingfaceException - {original_exception.message}",
                             llm_provider="huggingface",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 503:
                         exception_mapping_worked = True
@@ -1437,7 +1592,7 @@ def exception_type(  # type: ignore
                             message=f"HuggingfaceException - {original_exception.message}",
                             llm_provider="huggingface",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     else:
                         exception_mapping_worked = True
@@ -1456,7 +1611,7 @@ def exception_type(  # type: ignore
                             message=f"AI21Exception - {original_exception.message}",
                             model=model,
                             llm_provider="ai21",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     if "Bad or missing API token." in original_exception.message:
                         exception_mapping_worked = True
@@ -1464,7 +1619,7 @@ def exception_type(  # type: ignore
                             message=f"AI21Exception - {original_exception.message}",
                             model=model,
                             llm_provider="ai21",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                 if hasattr(original_exception, "status_code"):
                     if original_exception.status_code == 401:
@@ -1473,7 +1628,7 @@ def exception_type(  # type: ignore
                             message=f"AI21Exception - {original_exception.message}",
                             llm_provider="ai21",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 408:
                         exception_mapping_worked = True
@@ -1488,7 +1643,7 @@ def exception_type(  # type: ignore
                             message=f"AI21Exception - {original_exception.message}",
                             model=model,
                             llm_provider="ai21",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 429:
                         exception_mapping_worked = True
@@ -1496,7 +1651,7 @@ def exception_type(  # type: ignore
                             message=f"AI21Exception - {original_exception.message}",
                             llm_provider="ai21",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     else:
                         exception_mapping_worked = True
@@ -1515,7 +1670,7 @@ def exception_type(  # type: ignore
                             message=f"NLPCloudException - {error_str}",
                             model=model,
                             llm_provider="nlp_cloud",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif "value is not a valid" in error_str:
                         exception_mapping_worked = True
@@ -1523,7 +1678,7 @@ def exception_type(  # type: ignore
                             message=f"NLPCloudException - {error_str}",
                             model=model,
                             llm_provider="nlp_cloud",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     else:
                         exception_mapping_worked = True
@@ -1548,7 +1703,7 @@ def exception_type(  # type: ignore
                             message=f"NLPCloudException - {original_exception.message}",
                             llm_provider="nlp_cloud",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif (
                         original_exception.status_code == 401
@@ -1559,7 +1714,7 @@ def exception_type(  # type: ignore
                             message=f"NLPCloudException - {original_exception.message}",
                             llm_provider="nlp_cloud",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif (
                         original_exception.status_code == 522
@@ -1580,7 +1735,7 @@ def exception_type(  # type: ignore
                             message=f"NLPCloudException - {original_exception.message}",
                             llm_provider="nlp_cloud",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif (
                         original_exception.status_code == 500
@@ -1603,7 +1758,7 @@ def exception_type(  # type: ignore
                             message=f"NLPCloudException - {original_exception.message}",
                             model=model,
                             llm_provider="nlp_cloud",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     else:
                         exception_mapping_worked = True
@@ -1629,7 +1784,7 @@ def exception_type(  # type: ignore
                         message=f"TogetherAIException - {error_response['error']}",
                         model=model,
                         llm_provider="together_ai",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "error" in error_response
@@ -1640,7 +1795,7 @@ def exception_type(  # type: ignore
                         message=f"TogetherAIException - {error_response['error']}",
                         llm_provider="together_ai",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "error" in error_response
@@ -1651,7 +1806,7 @@ def exception_type(  # type: ignore
                         message=f"TogetherAIException - {error_response['error']}",
                         model=model,
                         llm_provider="together_ai",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "A timeout occurred" in error_str:
                     exception_mapping_worked = True
@@ -1670,7 +1825,7 @@ def exception_type(  # type: ignore
                         message=f"TogetherAIException - {error_response['error']}",
                         model=model,
                         llm_provider="together_ai",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     "error_type" in error_response
@@ -1681,7 +1836,7 @@ def exception_type(  # type: ignore
                         message=f"TogetherAIException - {error_response['error']}",
                         model=model,
                         llm_provider="together_ai",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 if hasattr(original_exception, "status_code"):
                     if original_exception.status_code == 408:
@@ -1697,7 +1852,7 @@ def exception_type(  # type: ignore
                             message=f"TogetherAIException - {error_response['error']}",
                             model=model,
                             llm_provider="together_ai",
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 429:
                         exception_mapping_worked = True
@@ -1705,7 +1860,7 @@ def exception_type(  # type: ignore
                             message=f"TogetherAIException - {original_exception.message}",
                             llm_provider="together_ai",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 524:
                         exception_mapping_worked = True
@@ -1733,7 +1888,7 @@ def exception_type(  # type: ignore
                         message=f"AlephAlphaException - {original_exception.message}",
                         llm_provider="aleph_alpha",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "InvalidToken" in error_str or "No token provided" in error_str:
                     exception_mapping_worked = True
@@ -1741,7 +1896,7 @@ def exception_type(  # type: ignore
                         message=f"AlephAlphaException - {original_exception.message}",
                         llm_provider="aleph_alpha",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif hasattr(original_exception, "status_code"):
                     verbose_logger.debug(
@@ -1760,7 +1915,7 @@ def exception_type(  # type: ignore
                             message=f"AlephAlphaException - {original_exception.message}",
                             llm_provider="aleph_alpha",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 429:
                         exception_mapping_worked = True
@@ -1768,7 +1923,7 @@ def exception_type(  # type: ignore
                             message=f"AlephAlphaException - {original_exception.message}",
                             llm_provider="aleph_alpha",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 500:
                         exception_mapping_worked = True
@@ -1776,7 +1931,7 @@ def exception_type(  # type: ignore
                             message=f"AlephAlphaException - {original_exception.message}",
                             llm_provider="aleph_alpha",
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                         )
                     raise original_exception
                 raise original_exception
@@ -1793,7 +1948,7 @@ def exception_type(  # type: ignore
                         message=f"OllamaException: Invalid Model/Model not loaded - {original_exception}",
                         model=model,
                         llm_provider="ollama",
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Failed to establish a new connection" in error_str:
                     exception_mapping_worked = True
@@ -1801,7 +1956,7 @@ def exception_type(  # type: ignore
                         message=f"OllamaException: {original_exception}",
                         llm_provider="ollama",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Invalid response object from API" in error_str:
                     exception_mapping_worked = True
@@ -1809,7 +1964,7 @@ def exception_type(  # type: ignore
                         message=f"OllamaException: {original_exception}",
                         llm_provider="ollama",
                         model=model,
-                        response=original_exception.response,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Read timed out" in error_str:
                     exception_mapping_worked = True
@@ -1843,6 +1998,7 @@ def exception_type(  # type: ignore
                         llm_provider="azure",
                         model=model,
                         litellm_debug_info=extra_information,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "This model's maximum context length is" in error_str:
                     exception_mapping_worked = True
@@ -1851,6 +2007,7 @@ def exception_type(  # type: ignore
                         llm_provider="azure",
                         model=model,
                         litellm_debug_info=extra_information,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "DeploymentNotFound" in error_str:
                     exception_mapping_worked = True
@@ -1859,6 +2016,7 @@ def exception_type(  # type: ignore
                         llm_provider="azure",
                         model=model,
                         litellm_debug_info=extra_information,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif (
                     (
@@ -1879,6 +2037,7 @@ def exception_type(  # type: ignore
                         llm_provider="azure",
                         model=model,
                         litellm_debug_info=extra_information,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "invalid_request_error" in error_str:
                     exception_mapping_worked = True
@@ -1887,6 +2046,8 @@ def exception_type(  # type: ignore
                         llm_provider="azure",
                         model=model,
                         litellm_debug_info=extra_information,
+                        response=getattr(original_exception, "response", None),
+                        body=getattr(original_exception, "body", None),
                     )
                 elif (
                     "The api_key client option must be set either by passing api_key to the client or by setting"
@@ -1898,6 +2059,7 @@ def exception_type(  # type: ignore
                         llm_provider=custom_llm_provider,
                         model=model,
                         litellm_debug_info=extra_information,
+                        response=getattr(original_exception, "response", None),
                     )
                 elif "Connection error" in error_str:
                     exception_mapping_worked = True
@@ -1916,6 +2078,8 @@ def exception_type(  # type: ignore
                             llm_provider="azure",
                             model=model,
                             litellm_debug_info=extra_information,
+                            response=getattr(original_exception, "response", None),
+                            body=getattr(original_exception, "body", None),
                         )
                     elif original_exception.status_code == 401:
                         exception_mapping_worked = True
@@ -1924,6 +2088,7 @@ def exception_type(  # type: ignore
                             llm_provider="azure",
                             model=model,
                             litellm_debug_info=extra_information,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 408:
                         exception_mapping_worked = True
@@ -1940,6 +2105,7 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider="azure",
                             litellm_debug_info=extra_information,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 429:
                         exception_mapping_worked = True
@@ -1948,6 +2114,7 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider="azure",
                             litellm_debug_info=extra_information,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 503:
                         exception_mapping_worked = True
@@ -1956,6 +2123,7 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider="azure",
                             litellm_debug_info=extra_information,
+                            response=getattr(original_exception, "response", None),
                         )
                     elif original_exception.status_code == 504:  # gateway timeout error
                         exception_mapping_worked = True
@@ -1964,6 +2132,7 @@ def exception_type(  # type: ignore
                             model=model,
                             litellm_debug_info=extra_information,
                             llm_provider="azure",
+                            exception_status_code=original_exception.status_code,
                         )
                     else:
                         exception_mapping_worked = True
@@ -1995,7 +2164,7 @@ def exception_type(  # type: ignore
                             message=f"{exception_provider} - {error_str}",
                             llm_provider=custom_llm_provider,
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 401:
@@ -2004,7 +2173,7 @@ def exception_type(  # type: ignore
                             message=f"AuthenticationError: {exception_provider} - {error_str}",
                             llm_provider=custom_llm_provider,
                             model=model,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 404:
@@ -2013,7 +2182,7 @@ def exception_type(  # type: ignore
                             message=f"NotFoundError: {exception_provider} - {error_str}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 408:
@@ -2030,7 +2199,7 @@ def exception_type(  # type: ignore
                             message=f"BadRequestError: {exception_provider} - {error_str}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 429:
@@ -2039,7 +2208,7 @@ def exception_type(  # type: ignore
                             message=f"RateLimitError: {exception_provider} - {error_str}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 503:
@@ -2048,7 +2217,7 @@ def exception_type(  # type: ignore
                             message=f"ServiceUnavailableError: {exception_provider} - {error_str}",
                             model=model,
                             llm_provider=custom_llm_provider,
-                            response=original_exception.response,
+                            response=getattr(original_exception, "response", None),
                             litellm_debug_info=extra_information,
                         )
                     elif original_exception.status_code == 504:  # gateway timeout error
@@ -2058,6 +2227,7 @@ def exception_type(  # type: ignore
                             model=model,
                             llm_provider=custom_llm_provider,
                             litellm_debug_info=extra_information,
+                            exception_status_code=original_exception.status_code,
                         )
                     else:
                         exception_mapping_worked = True

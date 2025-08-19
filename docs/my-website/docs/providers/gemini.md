@@ -4,11 +4,25 @@ import TabItem from '@theme/TabItem';
 
 # Gemini - Google AI Studio
 
-## Pre-requisites
-* `pip install -q google-generativeai`
-* Get API Key - https://aistudio.google.com/
+| Property | Details |
+|-------|-------|
+| Description | Google AI Studio is a fully-managed AI development platform for building and using generative AI. |
+| Provider Route on LiteLLM | `gemini/` |
+| Provider Doc | [Google AI Studio ↗](https://aistudio.google.com/) |
+| API Endpoint for Provider | https://generativelanguage.googleapis.com |
+| Supported OpenAI Endpoints | `/chat/completions`, [`/embeddings`](../embedding/supported_embedding#gemini-ai-embedding-models), `/completions` |
+| Pass-through Endpoint | [Supported](../pass_through/google_ai_studio.md) |
 
-# Gemini-Pro
+<br />
+
+
+## API Keys
+
+```python
+import os
+os.environ["GEMINI_API_KEY"] = "your-api-key"
+```
+
 ## Sample Usage
 ```python
 from litellm import completion
@@ -25,14 +39,281 @@ response = completion(
 - temperature
 - top_p
 - max_tokens
+- max_completion_tokens
 - stream
 - tools
 - tool_choice
+- functions
 - response_format
 - n
 - stop
+- logprobs
+- frequency_penalty
+- modalities
+- reasoning_content
+- audio (for TTS models only)
 
-[**See Updated List**](https://github.com/BerriAI/litellm/blob/1c747f3ad372399c5b95cc5696b06a5fbe53186b/litellm/llms/vertex_httpx.py#L122)
+**Anthropic Params**
+- thinking (used to set max budget tokens across anthropic/gemini models)
+
+[**See Updated List**](https://github.com/BerriAI/litellm/blob/main/litellm/llms/gemini/chat/transformation.py#L70)
+
+
+
+## Usage - Thinking / `reasoning_content`
+
+LiteLLM translates OpenAI's `reasoning_effort` to Gemini's `thinking` parameter. [Code](https://github.com/BerriAI/litellm/blob/620664921902d7a9bfb29897a7b27c1a7ef4ddfb/litellm/llms/vertex_ai/gemini/vertex_and_google_ai_studio_gemini.py#L362)
+
+Added an additional non-OpenAI standard "disable" value for non-reasoning Gemini requests.
+
+**Mapping**
+
+| reasoning_effort | thinking |
+| ---------------- | -------- |
+| "disable"        | "budget_tokens": 0    |
+| "low"            | "budget_tokens": 1024 |
+| "medium"         | "budget_tokens": 2048 |
+| "high"           | "budget_tokens": 4096 |
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+from litellm import completion
+
+resp = completion(
+    model="gemini/gemini-2.5-flash-preview-04-17",
+    messages=[{"role": "user", "content": "What is the capital of France?"}],
+    reasoning_effort="low",
+)
+
+```
+
+</TabItem>
+
+<TabItem value="proxy" label="PROXY">
+
+1. Setup config.yaml
+
+```yaml
+- model_name: gemini-2.5-flash
+  litellm_params:
+    model: gemini/gemini-2.5-flash-preview-04-17
+    api_key: os.environ/GEMINI_API_KEY
+```
+
+2. Start proxy
+
+```bash
+litellm --config /path/to/config.yaml
+```
+
+3. Test it! 
+
+```bash
+curl http://0.0.0.0:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <YOUR-LITELLM-KEY>" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [{"role": "user", "content": "What is the capital of France?"}],
+    "reasoning_effort": "low"
+  }'
+```
+
+</TabItem>
+</Tabs>
+
+
+**Expected Response**
+
+```python
+ModelResponse(
+    id='chatcmpl-c542d76d-f675-4e87-8e5f-05855f5d0f5e',
+    created=1740470510,
+    model='claude-3-7-sonnet-20250219',
+    object='chat.completion',
+    system_fingerprint=None,
+    choices=[
+        Choices(
+            finish_reason='stop',
+            index=0,
+            message=Message(
+                content="The capital of France is Paris.",
+                role='assistant',
+                tool_calls=None,
+                function_call=None,
+                reasoning_content='The capital of France is Paris. This is a very straightforward factual question.'
+            ),
+        )
+    ],
+    usage=Usage(
+        completion_tokens=68,
+        prompt_tokens=42,
+        total_tokens=110,
+        completion_tokens_details=None,
+        prompt_tokens_details=PromptTokensDetailsWrapper(
+            audio_tokens=None,
+            cached_tokens=0,
+            text_tokens=None,
+            image_tokens=None
+        ),
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0
+    )
+)
+```
+
+### Pass `thinking` to Gemini models
+
+You can also pass the `thinking` parameter to Gemini models.
+
+This is translated to Gemini's [`thinkingConfig` parameter](https://ai.google.dev/gemini-api/docs/thinking#set-budget).
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+response = litellm.completion(
+  model="gemini/gemini-2.5-flash-preview-04-17",
+  messages=[{"role": "user", "content": "What is the capital of France?"}],
+  thinking={"type": "enabled", "budget_tokens": 1024},
+)
+```
+
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+```bash
+curl http://0.0.0.0:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $LITELLM_KEY" \
+  -d '{
+    "model": "gemini/gemini-2.5-flash-preview-04-17",
+    "messages": [{"role": "user", "content": "What is the capital of France?"}],
+    "thinking": {"type": "enabled", "budget_tokens": 1024}
+  }'
+```
+
+</TabItem>
+</Tabs>
+
+
+
+
+
+## Text-to-Speech (TTS) Audio Output
+
+:::info
+
+LiteLLM supports Gemini TTS models that can generate audio responses using the OpenAI-compatible `audio` parameter format.
+
+:::
+
+### Supported Models
+
+LiteLLM supports Gemini TTS models with audio capabilities (e.g. `gemini-2.5-flash-preview-tts` and `gemini-2.5-pro-preview-tts`). For the complete list of available TTS models and voices, see the [official Gemini TTS documentation](https://ai.google.dev/gemini-api/docs/speech-generation).
+
+### Limitations
+
+:::warning
+
+**Important Limitations**:
+- Gemini TTS models only support the `pcm16` audio format
+- **Streaming support has not been added** to TTS models yet
+- The `modalities` parameter must be set to `['audio']` for TTS requests
+
+:::
+
+### Quick Start
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+from litellm import completion
+import os
+
+os.environ['GEMINI_API_KEY'] = "your-api-key"
+
+response = completion(
+    model="gemini/gemini-2.5-flash-preview-tts",
+    messages=[{"role": "user", "content": "Say hello in a friendly voice"}],
+    modalities=["audio"],  # Required for TTS models
+    audio={
+        "voice": "Kore",
+        "format": "pcm16"  # Required: must be "pcm16"
+    }
+)
+
+print(response)
+```
+
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+1. Setup config.yaml
+
+```yaml
+model_list:
+  - model_name: gemini-tts-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash-preview-tts
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemini-tts-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro-preview-tts
+      api_key: os.environ/GEMINI_API_KEY
+```
+
+2. Start proxy
+
+```bash
+litellm --config /path/to/config.yaml
+```
+
+3. Make TTS request
+
+```bash
+curl http://0.0.0.0:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <YOUR-LITELLM-KEY>" \
+  -d '{
+    "model": "gemini-tts-flash",
+    "messages": [{"role": "user", "content": "Say hello in a friendly voice"}],
+    "modalities": ["audio"],
+    "audio": {
+      "voice": "Kore",
+      "format": "pcm16"
+    }
+  }'
+```
+
+</TabItem>
+</Tabs>
+
+### Advanced Usage
+
+You can combine TTS with other Gemini features:
+
+```python
+response = completion(
+    model="gemini/gemini-2.5-pro-preview-tts",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant that speaks clearly."},
+        {"role": "user", "content": "Explain quantum computing in simple terms"}
+    ],
+    modalities=["audio"],
+    audio={
+        "voice": "Charon",
+        "format": "pcm16"
+    },
+    temperature=0.7,
+    max_tokens=150
+)
+```
+
+For more information about Gemini's TTS capabilities and available voices, see the [official Gemini TTS documentation](https://ai.google.dev/gemini-api/docs/speech-generation).
 
 ## Passing Gemini Specific Params
 ### Response schema 
@@ -103,7 +384,7 @@ $ litellm --config /path/to/config.yaml
 curl -X POST 'http://0.0.0.0:4000/chat/completions' \
 -H 'Content-Type: application/json' \
 -H 'Authorization: Bearer sk-1234' \
--D '{
+-d '{
   "model": "gemini-pro",
   "messages": [
         {"role": "user", "content": "List 5 popular cookie recipes."}
@@ -174,7 +455,7 @@ $ litellm --config /path/to/config.yaml
 curl -X POST 'http://0.0.0.0:4000/chat/completions' \
 -H 'Content-Type: application/json' \
 -H 'Authorization: Bearer sk-1234' \
--D '{
+-d '{
   "model": "gemini-pro",
   "messages": [
         {"role": "user", "content": "List 5 popular cookie recipes."}
@@ -324,7 +605,7 @@ $ litellm --config /path/to/config.yaml
 curl -X POST 'http://0.0.0.0:4000/chat/completions' \
 -H 'Content-Type: application/json' \
 -H 'Authorization: Bearer sk-1234' \
--D '{
+-d '{
   "model": "gemini-pro",
   "messages": [
         {"role": "user", "content": "List 5 popular cookie recipes."}
@@ -351,7 +632,7 @@ curl -X POST 'http://0.0.0.0:4000/chat/completions' \
 </Tabs>
 
 ## Specifying Safety Settings 
-In certain use-cases you may need to make calls to the models and pass [safety settigns](https://ai.google.dev/docs/safety_setting_gemini) different from the defaults. To do so, simple pass the `safety_settings` argument to `completion` or `acompletion`. For example:
+In certain use-cases you may need to make calls to the models and pass [safety settings](https://ai.google.dev/docs/safety_setting_gemini) different from the defaults. To do so, simple pass the `safety_settings` argument to `completion` or `acompletion`. For example:
 
 ```python
 response = completion(
@@ -422,6 +703,239 @@ assert isinstance(
 
 
 ```
+
+
+### Google Search Tool
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+from litellm import completion
+import os
+
+os.environ["GEMINI_API_KEY"] = ".."
+
+tools = [{"googleSearch": {}}] # 👈 ADD GOOGLE SEARCH
+
+response = completion(
+    model="gemini/gemini-2.0-flash",
+    messages=[{"role": "user", "content": "What is the weather in San Francisco?"}],
+    tools=tools,
+)
+
+print(response)
+```
+
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+1. Setup config.yaml
+```yaml
+model_list:
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+```
+
+2. Start Proxy
+```bash
+$ litellm --config /path/to/config.yaml
+```
+
+3. Make Request!
+```bash
+curl -X POST 'http://0.0.0.0:4000/chat/completions' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer sk-1234' \
+-d '{
+  "model": "gemini-2.0-flash",
+  "messages": [{"role": "user", "content": "What is the weather in San Francisco?"}],
+  "tools": [{"googleSearch": {}}]
+}
+'
+```
+
+</TabItem>
+</Tabs>
+
+### URL Context 
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+from litellm import completion
+import os
+
+os.environ["GEMINI_API_KEY"] = ".."
+
+# 👇 ADD URL CONTEXT
+tools = [{"urlContext": {}}]
+
+response = completion(
+    model="gemini/gemini-2.0-flash",
+    messages=[{"role": "user", "content": "Summarize this document: https://ai.google.dev/gemini-api/docs/models"}],
+    tools=tools,
+)
+
+print(response)
+
+# Access URL context metadata
+url_context_metadata = response.model_extra['vertex_ai_url_context_metadata']
+urlMetadata = url_context_metadata[0]['urlMetadata'][0]
+print(f"Retrieved URL: {urlMetadata['retrievedUrl']}")
+print(f"Retrieval Status: {urlMetadata['urlRetrievalStatus']}")
+```
+
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+1. Setup config.yaml
+```yaml
+model_list:
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+```
+
+2. Start Proxy
+```bash
+$ litellm --config /path/to/config.yaml
+```
+
+3. Make Request!
+```bash
+curl -X POST 'http://0.0.0.0:4000/chat/completions' \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <YOUR-LITELLM-KEY>" \
+  -d '{
+    "model": "gemini-2.0-flash",
+    "messages": [{"role": "user", "content": "Summarize this document: https://ai.google.dev/gemini-api/docs/models"}],
+    "tools": [{"urlContext": {}}]
+  }'
+```
+</TabItem>
+</Tabs>
+
+### Google Search Retrieval
+
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+from litellm import completion
+import os
+
+os.environ["GEMINI_API_KEY"] = ".."
+
+tools = [{"googleSearch": {}}] # 👈 ADD GOOGLE SEARCH
+
+response = completion(
+    model="gemini/gemini-2.0-flash",
+    messages=[{"role": "user", "content": "What is the weather in San Francisco?"}],
+    tools=tools,
+)
+
+print(response)
+```
+
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+1. Setup config.yaml
+```yaml
+model_list:
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+```
+
+2. Start Proxy
+```bash
+$ litellm --config /path/to/config.yaml
+```
+
+3. Make Request!
+```bash
+curl -X POST 'http://0.0.0.0:4000/chat/completions' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer sk-1234' \
+-d '{
+  "model": "gemini-2.0-flash",
+  "messages": [{"role": "user", "content": "What is the weather in San Francisco?"}],
+  "tools": [{"googleSearch": {}}]
+}
+'
+```
+
+</TabItem>
+</Tabs>
+
+
+### Code Execution Tool
+
+
+<Tabs>
+<TabItem value="sdk" label="SDK">
+
+```python
+from litellm import completion
+import os
+
+os.environ["GEMINI_API_KEY"] = ".."
+
+tools = [{"codeExecution": {}}] # 👈 ADD GOOGLE SEARCH
+
+response = completion(
+    model="gemini/gemini-2.0-flash",
+    messages=[{"role": "user", "content": "What is the weather in San Francisco?"}],
+    tools=tools,
+)
+
+print(response)
+```
+
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+1. Setup config.yaml
+```yaml
+model_list:
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+```
+
+2. Start Proxy
+```bash
+$ litellm --config /path/to/config.yaml
+```
+
+3. Make Request!
+```bash
+curl -X POST 'http://0.0.0.0:4000/chat/completions' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer sk-1234' \
+-d '{
+  "model": "gemini-2.0-flash",
+  "messages": [{"role": "user", "content": "What is the weather in San Francisco?"}],
+  "tools": [{"codeExecution": {}}]
+}
+'
+```
+
+</TabItem>
+</Tabs>
+
+
+
+
 
 
 ## JSON Mode
@@ -539,24 +1053,214 @@ content = response.get('choices', [{}])[0].get('message', {}).get('content')
 print(content)
 ```
 
+## Usage - PDF / Videos / etc. Files
+
+### Inline Data (e.g. audio stream)
+
+LiteLLM follows the OpenAI format and accepts sending inline data as an encoded base64 string. 
+
+The format to follow is 
+
+```python
+data:<mime_type>;base64,<encoded_data>
+```
+
+** LITELLM CALL **
+
+```python
+import litellm
+from pathlib import Path
+import base64
+import os
+
+os.environ["GEMINI_API_KEY"] = "" 
+
+litellm.set_verbose = True # 👈 See Raw call 
+
+audio_bytes = Path("speech_vertex.mp3").read_bytes()
+encoded_data = base64.b64encode(audio_bytes).decode("utf-8")
+print("Audio Bytes = {}".format(audio_bytes))
+model = "gemini/gemini-1.5-flash"
+response = litellm.completion(
+    model=model,
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Please summarize the audio."},
+                {
+                    "type": "file",
+                    "file": {
+                        "file_data": "data:audio/mp3;base64,{}".format(encoded_data), # 👈 SET MIME_TYPE + DATA
+                    }
+                },
+            ],
+        }
+    ],
+)
+```
+
+** Equivalent GOOGLE API CALL ** 
+
+```python
+# Initialize a Gemini model appropriate for your use case.
+model = genai.GenerativeModel('models/gemini-1.5-flash')
+
+# Create the prompt.
+prompt = "Please summarize the audio."
+
+# Load the samplesmall.mp3 file into a Python Blob object containing the audio
+# file's bytes and then pass the prompt and the audio to Gemini.
+response = model.generate_content([
+    prompt,
+    {
+        "mime_type": "audio/mp3",
+        "data": pathlib.Path('samplesmall.mp3').read_bytes()
+    }
+])
+
+# Output Gemini's response to the prompt and the inline audio.
+print(response.text)
+```
+
+### https:// file 
+
+```python
+import litellm
+import os
+
+os.environ["GEMINI_API_KEY"] = "" 
+
+litellm.set_verbose = True # 👈 See Raw call 
+
+model = "gemini/gemini-1.5-flash"
+response = litellm.completion(
+    model=model,
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Please summarize the file."},
+                {
+                    "type": "file",
+                    "file": {
+                        "file_id": "https://storage...", # 👈 SET THE IMG URL
+                        "format": "application/pdf" # OPTIONAL
+                    }
+                },
+            ],
+        }
+    ],
+)
+```
+
+### gs:// file 
+
+```python
+import litellm
+import os
+
+os.environ["GEMINI_API_KEY"] = "" 
+
+litellm.set_verbose = True # 👈 See Raw call 
+
+model = "gemini/gemini-1.5-flash"
+response = litellm.completion(
+    model=model,
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Please summarize the file."},
+                {
+                    "type": "file",
+                    "file": {
+                        "file_id": "gs://storage...", # 👈 SET THE IMG URL
+                        "format": "application/pdf" # OPTIONAL
+                    }
+                },
+            ],
+        }
+    ],
+)
+```
+
+
+## Chat Models
+:::tip
+
+**We support ALL Gemini models, just set `model=gemini/<any-model-on-gemini>` as a prefix when sending litellm requests**
+
+:::
+| Model Name            | Function Call                                          | Required OS Variables          |
+|-----------------------|--------------------------------------------------------|--------------------------------|
+| gemini-pro            | `completion(model='gemini/gemini-pro', messages)`            | `os.environ['GEMINI_API_KEY']` |
+| gemini-1.5-pro-latest | `completion(model='gemini/gemini-1.5-pro-latest', messages)` | `os.environ['GEMINI_API_KEY']` |
+| gemini-2.0-flash     | `completion(model='gemini/gemini-2.0-flash', messages)`     | `os.environ['GEMINI_API_KEY']` |
+| gemini-2.0-flash-exp     | `completion(model='gemini/gemini-2.0-flash-exp', messages)`     | `os.environ['GEMINI_API_KEY']` |
+| gemini-2.0-flash-lite-preview-02-05	     | `completion(model='gemini/gemini-2.0-flash-lite-preview-02-05', messages)`     | `os.environ['GEMINI_API_KEY']` |
+
+
+
 ## Context Caching
 
 Use Google AI Studio context caching is supported by
 
 ```bash
 {
-    ...,
-    "cache_control": {"type": "ephemeral"}
+    {
+        "role": "system",
+        "content": ...,
+        "cache_control": {"type": "ephemeral"} # 👈 KEY CHANGE
+    },
+    ...
 }
 ```
 
 in your message content block.
 
-:::note
+### Custom TTL Support
 
-Gemini Context Caching only allows 1 block of continuous messages to be cached. 
+You can now specify a custom Time-To-Live (TTL) for your cached content using the `ttl` parameter:
 
-The raw request to Gemini looks like this: 
+```bash
+{
+    {
+        "role": "system",
+        "content": ...,
+        "cache_control": {
+            "type": "ephemeral",
+            "ttl": "3600s"  # 👈 Cache for 1 hour
+        }
+    },
+    ...
+}
+```
+
+**TTL Format Requirements:**
+- Must be a string ending with 's' for seconds
+- Must contain a positive number (can be decimal)
+- Examples: `"3600s"` (1 hour), `"7200s"` (2 hours), `"1800s"` (30 minutes), `"1.5s"` (1.5 seconds)
+
+**TTL Behavior:**
+- If multiple cached messages have different TTLs, the first valid TTL encountered will be used
+- Invalid TTL formats are ignored and the cache will use Google's default expiration time
+- If no TTL is specified, Google's default cache expiration (approximately 1 hour) applies
+
+### Architecture Diagram
+
+<Image img={require('../../img/gemini_context_caching.png')} />
+
+**Notes:**
+
+- [Relevant code](https://github.com/BerriAI/litellm/blob/main/litellm/llms/vertex_ai/context_caching/vertex_ai_context_caching.py#L255)
+
+- Gemini Context Caching only allows 1 block of continuous messages to be cached. 
+
+- If multiple non-continuous blocks contain `cache_control` - the first continuous block will be used. (sent to `/cachedContent` in the [Gemini format](https://ai.google.dev/api/caching#cache_create-SHELL))
+
+- The raw request to Gemini's `/generateContent` endpoint looks like this: 
+
 ```bash
 curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=$GOOGLE_API_KEY" \
 -H 'Content-Type: application/json' \
@@ -574,7 +1278,7 @@ curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5
 
 ```
 
-:::
+### Example Usage
 
 <Tabs>
 <TabItem value="sdk" label="SDK">
@@ -611,6 +1315,48 @@ for _ in range(2):
     )
 
     print(resp.usage) # 👈 2nd usage block will be less, since cached tokens used
+```
+
+</TabItem>
+<TabItem value="sdk-ttl" label="SDK with Custom TTL">
+
+```python
+from litellm import completion 
+
+# Cache for 2 hours (7200 seconds)
+resp = completion(
+    model="gemini/gemini-1.5-pro",
+    messages=[
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Here is the full text of a complex legal agreement" * 4000,
+                    "cache_control": {
+                        "type": "ephemeral", 
+                        "ttl": "7200s"  # 👈 Cache for 2 hours
+                    },
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "What are the key terms and conditions in this agreement?",
+                    "cache_control": {
+                        "type": "ephemeral",
+                        "ttl": "3600s"  # 👈 This TTL will be ignored (first one is used)
+                    },
+                }
+            ],
+        }
+    ]
+)
+
+print(resp.usage)
 ```
 
 </TabItem>
@@ -670,6 +1416,44 @@ curl --location 'http://0.0.0.0:4000/chat/completions' \
 }'
 ```
 </TabItem>
+<TabItem value="curl-ttl" label="Curl with Custom TTL">
+
+```bash
+curl --location 'http://0.0.0.0:4000/chat/completions' \
+    --header 'Content-Type: application/json' \
+    --data '{
+    "model": "gemini-1.5-pro",
+    "messages": [
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Here is the full text of a complex legal agreement" * 4000,
+                    "cache_control": {
+                        "type": "ephemeral",
+                        "ttl": "7200s"
+                    }
+                }
+            ]
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "What are the key terms and conditions in this agreement?",
+                    "cache_control": {
+                        "type": "ephemeral",
+                        "ttl": "3600s"
+                    }
+                }
+            ]
+        }
+    ]
+}'
+```
+</TabItem>
 <TabItem value="openai-python" label="OpenAI Python SDK">
 
 ```python 
@@ -703,144 +1487,92 @@ response = await client.chat.completions.create(
 ```
 
 </TabItem>
+<TabItem value="openai-python-ttl" label="OpenAI Python SDK with TTL">
+
+```python 
+import openai
+client = openai.AsyncOpenAI(
+    api_key="anything",            # litellm proxy api key
+    base_url="http://0.0.0.0:4000" # litellm proxy base url
+)
+
+response = await client.chat.completions.create(
+    model="gemini-1.5-pro",
+    messages=[
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Here is the full text of a complex legal agreement" * 4000,
+                    "cache_control": {
+                        "type": "ephemeral",
+                        "ttl": "7200s"  # Cache for 2 hours
+                    }
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": "what are the key terms and conditions in this agreement?",
+        },
+    ]
+)
+```
+
+</TabItem>
 </Tabs>
 
 </TabItem>
 </Tabs>
 
-## Usage - PDF / Videos / etc. Files
+## Image Generation
 
-### Inline Data (e.g. audio stream)
-
-LiteLLM follows the OpenAI format and accepts sending inline data as an encoded base64 string. 
-
-The format to follow is 
+<Tabs>
+<TabItem value="sdk" label="SDK">
 
 ```python
-data:<mime_type>;base64,<encoded_data>
-```
+from litellm import completion 
 
-** LITELLM CALL **
-
-```python
-import litellm
-from pathlib import Path
-import base64
-import os
-
-os.environ["GEMINI_API_KEY"] = "" 
-
-litellm.set_verbose = True # 👈 See Raw call 
-
-audio_bytes = Path("speech_vertex.mp3").read_bytes()
-encoded_data = base64.b64encode(audio_bytes).decode("utf-8")
-print("Audio Bytes = {}".format(audio_bytes))
-model = "gemini/gemini-1.5-flash"
-response = litellm.completion(
-    model=model,
-    messages=[
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Please summarize the audio."},
-                {
-                    "type": "image_url",
-                    "image_url": "data:audio/mp3;base64,{}".format(encoded_data), # 👈 SET MIME_TYPE + DATA
-                },
-            ],
-        }
-    ],
+response = completion(
+    model="gemini/gemini-2.0-flash-exp-image-generation",
+    messages=[{"role": "user", "content": "Generate an image of a cat"}],
+    modalities=["image", "text"],
 )
+assert response.choices[0].message.content is not None # "data:image/png;base64,e4rr.."
+```
+</TabItem>
+<TabItem value="proxy" label="PROXY">
+
+1. Setup config.yaml
+
+```yaml
+model_list:
+  - model_name: gemini-2.0-flash-exp-image-generation
+    litellm_params:
+      model: gemini/gemini-2.0-flash-exp-image-generation
+      api_key: os.environ/GEMINI_API_KEY
 ```
 
-** Equivalent GOOGLE API CALL ** 
+2. Start proxy
 
-```python
-# Initialize a Gemini model appropriate for your use case.
-model = genai.GenerativeModel('models/gemini-1.5-flash')
-
-# Create the prompt.
-prompt = "Please summarize the audio."
-
-# Load the samplesmall.mp3 file into a Python Blob object containing the audio
-# file's bytes and then pass the prompt and the audio to Gemini.
-response = model.generate_content([
-    prompt,
-    {
-        "mime_type": "audio/mp3",
-        "data": pathlib.Path('samplesmall.mp3').read_bytes()
-    }
-])
-
-# Output Gemini's response to the prompt and the inline audio.
-print(response.text)
+```bash
+litellm --config /path/to/config.yaml
 ```
 
-### https:// file 
+3. Test it!
 
-```python
-import litellm
-import os
-
-os.environ["GEMINI_API_KEY"] = "" 
-
-litellm.set_verbose = True # 👈 See Raw call 
-
-model = "gemini/gemini-1.5-flash"
-response = litellm.completion(
-    model=model,
-    messages=[
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Please summarize the file."},
-                {
-                    "type": "image_url",
-                    "image_url": "https://storage..." # 👈 SET THE IMG URL
-                },
-            ],
-        }
-    ],
-)
+```bash
+curl -L -X POST 'http://localhost:4000/v1/chat/completions' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer sk-1234' \
+-d '{
+    "model": "gemini-2.0-flash-exp-image-generation",
+    "messages": [{"role": "user", "content": "Generate an image of a cat"}],
+    "modalities": ["image", "text"]
+}'
 ```
 
-### gs:// file 
+</TabItem>
+</Tabs>
 
-```python
-import litellm
-import os
-
-os.environ["GEMINI_API_KEY"] = "" 
-
-litellm.set_verbose = True # 👈 See Raw call 
-
-model = "gemini/gemini-1.5-flash"
-response = litellm.completion(
-    model=model,
-    messages=[
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Please summarize the file."},
-                {
-                    "type": "image_url",
-                    "image_url": "gs://..." # 👈 SET THE cloud storage bucket url
-                },
-            ],
-        }
-    ],
-)
-```
-
-
-## Chat Models
-:::tip
-
-**We support ALL Gemini models, just set `model=gemini/<any-model-on-gemini>` as a prefix when sending litellm requests**
-
-:::
-| Model Name            | Function Call                                          | Required OS Variables          |
-|-----------------------|--------------------------------------------------------|--------------------------------|
-| gemini-pro            | `completion(model='gemini/gemini-pro', messages)`            | `os.environ['GEMINI_API_KEY']` |
-| gemini-1.5-pro-latest | `completion(model='gemini/gemini-1.5-pro-latest', messages)` | `os.environ['GEMINI_API_KEY']` |
-| gemini-pro-vision     | `completion(model='gemini/gemini-pro-vision', messages)`     | `os.environ['GEMINI_API_KEY']` |

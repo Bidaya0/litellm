@@ -64,11 +64,12 @@ from litellm.proxy.proxy_server import (
     chat_completion,
     completion,
     embeddings,
-    image_generation,
     model_list,
     moderations,
-    new_end_user,
     user_api_key_auth,
+)
+from litellm.proxy.management_endpoints.customer_endpoints import (
+    new_end_user,
 )
 from litellm.proxy.spend_tracking.spend_management_endpoints import (
     global_spend,
@@ -85,13 +86,13 @@ verbose_proxy_logger.setLevel(level=logging.DEBUG)
 
 from starlette.datastructures import URL
 
-from litellm.caching import DualCache
+from litellm.caching.caching import DualCache
+from litellm.types.proxy.management_endpoints.ui_sso import LiteLLM_UpperboundKeyGenerateParams
 from litellm.proxy._types import (
     DynamoDBArgs,
     GenerateKeyRequest,
     RegenerateKeyRequest,
     KeyRequest,
-    LiteLLM_UpperboundKeyGenerateParams,
     NewCustomerRequest,
     NewTeamRequest,
     NewUserRequest,

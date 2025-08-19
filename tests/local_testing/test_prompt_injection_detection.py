@@ -20,7 +20,7 @@ from litellm.proxy.hooks.prompt_injection_detection import (
 from litellm import Router, mock_completion
 from litellm.proxy.utils import ProxyLogging
 from litellm.proxy._types import UserAPIKeyAuth, LiteLLMPromptInjectionParams
-from litellm.caching import DualCache
+from litellm.caching.caching import DualCache
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_prompt_injection_llm_eval():
                 {
                     "model_name": "gpt-3.5-turbo",  # openai model name
                     "litellm_params": {  # params for litellm completion/embedding call
-                        "model": "azure/chatgpt-v-2",
+                        "model": "azure/chatgpt-v-3",
                         "api_key": os.getenv("AZURE_API_KEY"),
                         "api_version": os.getenv("AZURE_API_VERSION"),
                         "api_base": os.getenv("AZURE_API_BASE"),

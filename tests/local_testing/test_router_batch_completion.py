@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 
 import litellm
 from litellm import Router
-from litellm.router import Deployment, LiteLLM_Params, ModelInfo
+from litellm.router import Deployment, LiteLLM_Params
+from litellm.types.router import ModelInfo
 
 load_dotenv()
 
@@ -64,6 +65,7 @@ async def test_batch_completion_multiple_models(mode):
         models_in_responses = []
         print(f"response: {response}")
         for individual_response in response:
+            print(f"individual_response: {individual_response}")
             _model = individual_response["model"]
             models_in_responses.append(_model)
 
@@ -128,6 +130,7 @@ async def test_batch_completion_fastest_response_unit_test():
 @pytest.mark.asyncio
 async def test_batch_completion_fastest_response_streaming():
     litellm.set_verbose = True
+    litellm._turn_on_debug()
 
     router = litellm.Router(
         model_list=[

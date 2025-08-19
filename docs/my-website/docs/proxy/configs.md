@@ -2,7 +2,7 @@ import Image from '@theme/IdealImage';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Proxy Config.yaml
+# Overview
 Set model list, `api_base`, `api_key`, `temperature` & proxy server settings (`master-key`) on the config.yaml. 
 
 | Param Name           | Description                                                   |
@@ -28,22 +28,22 @@ In the config below:
 
 E.g.: 
 - `model=vllm-models` will route to `openai/facebook/opt-125m`. 
-- `model=gpt-3.5-turbo` will load balance between `azure/gpt-turbo-small-eu` and `azure/gpt-turbo-small-ca`
+- `model=gpt-4o` will load balance between `azure/gpt-4o-eu` and `azure/gpt-4o-ca`
 
 ```yaml
 model_list:
-  - model_name: gpt-3.5-turbo ### RECEIVED MODEL NAME ###
+  - model_name: gpt-4o ### RECEIVED MODEL NAME ###
     litellm_params: # all params accepted by litellm.completion() - https://docs.litellm.ai/docs/completion/input
-      model: azure/gpt-turbo-small-eu ### MODEL NAME sent to `litellm.completion()` ###
+      model: azure/gpt-4o-eu ### MODEL NAME sent to `litellm.completion()` ###
       api_base: https://my-endpoint-europe-berri-992.openai.azure.com/
       api_key: "os.environ/AZURE_API_KEY_EU" # does os.getenv("AZURE_API_KEY_EU")
       rpm: 6      # [OPTIONAL] Rate limit for this deployment: in requests per minute (rpm)
   - model_name: bedrock-claude-v1 
     litellm_params:
       model: bedrock/anthropic.claude-instant-v1
-  - model_name: gpt-3.5-turbo
+  - model_name: gpt-4o
     litellm_params:
-      model: azure/gpt-turbo-small-ca
+      model: azure/gpt-4o-ca
       api_base: https://my-endpoint-canada-berri992.openai.azure.com/
       api_key: "os.environ/AZURE_API_KEY_CA"
       rpm: 6
@@ -100,9 +100,9 @@ $ litellm --config /path/to/config.yaml --detailed_debug
 
 #### Step 3: Test it
 
-Sends request to model where `model_name=gpt-3.5-turbo` on config.yaml. 
+Sends request to model where `model_name=gpt-4o` on config.yaml. 
 
-If multiple with `model_name=gpt-3.5-turbo` does [Load Balancing](https://docs.litellm.ai/docs/proxy/load_balancing)
+If multiple with `model_name=gpt-4o` does [Load Balancing](https://docs.litellm.ai/docs/proxy/load_balancing)
 
 **[Langchain, OpenAI SDK Usage Examples](../proxy/user_keys#request-format)**
 
@@ -110,7 +110,7 @@ If multiple with `model_name=gpt-3.5-turbo` does [Load Balancing](https://docs.l
 curl --location 'http://0.0.0.0:4000/chat/completions' \
 --header 'Content-Type: application/json' \
 --data ' {
-      "model": "gpt-3.5-turbo",
+      "model": "gpt-4o",
       "messages": [
         {
           "role": "user",
@@ -145,9 +145,9 @@ model_list:
       api_key: sk-123
       api_base: https://openai-gpt-4-test-v-2.openai.azure.com/
       temperature: 0.2
-  - model_name: openai-gpt-3.5
+  - model_name: openai-gpt-4o
     litellm_params:
-      model: openai/gpt-3.5-turbo
+      model: openai/gpt-4o
       extra_headers: {"AI-Resource Group": "ishaan-resource"}
       api_key: sk-123
       organization: org-ikDc4ex8NB
@@ -357,60 +357,6 @@ curl --location 'http://0.0.0.0:4000/v1/model/info' \
 --data ''
 ```
 
- 
-### Provider specific wildcard routing 
-**Proxy all models from a provider**
-
-Use this if you want to **proxy all models from a specific provider without defining them on the config.yaml**
-
-**Step 1** - define provider specific routing on config.yaml
-```yaml
-model_list:
-  # provider specific wildcard routing
-  - model_name: "anthropic/*"
-    litellm_params:
-      model: "anthropic/*"
-      api_key: os.environ/ANTHROPIC_API_KEY
-  - model_name: "groq/*"
-    litellm_params:
-      model: "groq/*"
-      api_key: os.environ/GROQ_API_KEY
-```
-
-Step 2 - Run litellm proxy 
-
-```shell
-$ litellm --config /path/to/config.yaml
-```
-
-Step 3 Test it 
-
-Test with `anthropic/` - all models with `anthropic/` prefix will get routed to `anthropic/*`
-```shell
-curl http://localhost:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-1234" \
-  -d '{
-    "model": "anthropic/claude-3-sonnet-20240229",
-    "messages": [
-      {"role": "user", "content": "Hello, Claude!"}
-    ]
-  }'
-```
-
-Test with `groq/` - all models with `groq/` prefix will get routed to `groq/*`
-```shell
-curl http://localhost:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-1234" \
-  -d '{
-    "model": "groq/llama3-8b-8192",
-    "messages": [
-      {"role": "user", "content": "Hello, Claude!"}
-    ]
-  }'
-```
-
 ### Load Balancing 
 
 :::info
@@ -449,9 +395,9 @@ model_list:
         model: huggingface/HuggingFaceH4/zephyr-7b-beta
         api_base: http://0.0.0.0:8003
         rpm: 60000      
-  - model_name: gpt-3.5-turbo
+  - model_name: gpt-4o
     litellm_params:
-        model: gpt-3.5-turbo
+        model: gpt-4o
         api_key: <my-openai-key>
         rpm: 200      
   - model_name: gpt-3.5-turbo-16k
@@ -463,13 +409,13 @@ model_list:
 litellm_settings:
   num_retries: 3 # retry call 3 times on each model_name (e.g. zephyr-beta)
   request_timeout: 10 # raise Timeout error if call takes longer than 10s. Sets litellm.request_timeout 
-  fallbacks: [{"zephyr-beta": ["gpt-3.5-turbo"]}] # fallback to gpt-3.5-turbo if call fails num_retries 
-  context_window_fallbacks: [{"zephyr-beta": ["gpt-3.5-turbo-16k"]}, {"gpt-3.5-turbo": ["gpt-3.5-turbo-16k"]}] # fallback to gpt-3.5-turbo-16k if context window error
+  fallbacks: [{"zephyr-beta": ["gpt-4o"]}] # fallback to gpt-4o if call fails num_retries 
+  context_window_fallbacks: [{"zephyr-beta": ["gpt-3.5-turbo-16k"]}, {"gpt-4o": ["gpt-3.5-turbo-16k"]}] # fallback to gpt-3.5-turbo-16k if context window error
   allowed_fails: 3 # cooldown model if it fails > 1 call in a minute. 
 
 router_settings: # router_settings are optional
   routing_strategy: simple-shuffle # Literal["simple-shuffle", "least-busy", "usage-based-routing","latency-based-routing"], default="simple-shuffle"
-  model_group_alias: {"gpt-4": "gpt-3.5-turbo"} # all requests with `gpt-4` will be routed to models with `gpt-3.5-turbo`
+  model_group_alias: {"gpt-4": "gpt-4o"} # all requests with `gpt-4` will be routed to models with `gpt-4o`
   num_retries: 2
   timeout: 30                                  # 30 seconds
   redis_host: <your redis host>                # set this when using multiple litellm proxy deployments, load balancing state stored in redis
@@ -502,6 +448,34 @@ model_list:
 
 s/o to [@David Manouchehri](https://www.linkedin.com/in/davidmanouchehri/) for helping with this. 
 
+### Centralized Credential Management
+
+Define credentials once and reuse them across multiple models. This helps with:
+- Secret rotation
+- Reducing config duplication
+
+```yaml
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: azure/gpt-4o
+      litellm_credential_name: default_azure_credential  # Reference credential below
+
+credential_list:
+  - credential_name: default_azure_credential
+    credential_values:
+      api_key: os.environ/AZURE_API_KEY  # Load from environment
+      api_base: os.environ/AZURE_API_BASE
+      api_version: "2023-05-15"
+    credential_info:
+      description: "Production credentials for EU region"
+```
+
+#### Key Parameters
+- `credential_name`: Unique identifier for the credential set
+- `credential_values`: Key-value pairs of credentials/secrets (supports `os.environ/` syntax)
+- `credential_info`: Key-value pairs of user provided credentials information.  No key-value pairs are required, but the dictionary must exist.
+
 ### Load API Keys from Secret Managers (Azure Vault, etc)
 
 [**Using Secret Managers with LiteLLM Proxy**](../secret)
@@ -522,9 +496,9 @@ Supported Environments:
 2. For each model set the list of supported environments in `model_info.supported_environments`
 ```yaml
 model_list:
- - model_name: gpt-3.5-turbo
+ - model_name: gpt-3.5-turbo-16k
    litellm_params:
-     model: openai/gpt-3.5-turbo
+     model: openai/gpt-3.5-turbo-16k
      api_key: os.environ/OPENAI_API_KEY
    model_info:
      supported_environments: ["development", "production", "staging"]
@@ -570,6 +544,32 @@ model_list:
 $ litellm --config /path/to/config.yaml
 ``` 
 
+### Set custom tokenizer 
+
+If you're using the [`/utils/token_counter` endpoint](https://litellm-api.up.railway.app/#/llm%20utils/token_counter_utils_token_counter_post), and want to set a custom huggingface tokenizer for a model, you can do so in the `config.yaml`
+
+```yaml
+model_list:
+  - model_name: openai-deepseek
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      access_groups: ["restricted-models"]
+      custom_tokenizer: 
+        identifier: deepseek-ai/DeepSeek-V3-Base
+        revision: main
+        auth_token: os.environ/HUGGINGFACE_API_KEY
+```
+
+**Spec**
+```
+custom_tokenizer: 
+  identifier: str # huggingface model identifier
+  revision: str # huggingface model revision (usually 'main')
+  auth_token: Optional[str] # huggingface auth token 
+```
+
 ## General Settings `general_settings` (DB Connection, etc)
 
 ### Configure DB Pool Limits + Connection Timeouts 
@@ -579,94 +579,6 @@ general_settings:
   database_connection_pool_limit: 100 # sets connection pool for prisma client to postgres db at 100
   database_connection_timeout: 60 # sets a 60s timeout for any connection call to the db 
 ```
-
-## **All settings**
-
-
-```yaml
-environment_variables: {}
-
-model_list:
-  - model_name: string
-    litellm_params: {}
-    model_info:
-      id: string
-      mode: embedding
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      max_tokens: 2048
-      base_model: gpt-4-1106-preview
-      additionalProp1: {}
-
-litellm_settings:
-  success_callback: ["langfuse"]  # list of success callbacks
-  failure_callback: ["sentry"]  # list of failure callbacks
-  callbacks: ["otel"]  # list of callbacks - runs on success and failure
-  service_callbacks: ["datadog", "prometheus"]  # logs redis, postgres failures on datadog, prometheus
-  turn_off_message_logging: boolean  # prevent the messages and responses from being logged to on your callbacks, but request metadata will still be logged.
-  redact_user_api_key_info: boolean  # Redact information about the user api key (hashed token, user_id, team id, etc.), from logs. Currently supported for Langfuse, OpenTelemetry, Logfire, ArizeAI logging.
-
-callback_settings:
-  otel:
-    message_logging: boolean  # OTEL logging callback specific settings
-
-general_settings:
-  completion_model: string
-  disable_spend_logs: boolean  # turn off writing each transaction to the db
-  disable_master_key_return: boolean  # turn off returning master key on UI (checked on '/user/info' endpoint)
-  disable_retry_on_max_parallel_request_limit_error: boolean  # turn off retries when max parallel request limit is reached
-  disable_reset_budget: boolean  # turn off reset budget scheduled task
-  disable_adding_master_key_hash_to_db: boolean  # turn off storing master key hash in db, for spend tracking
-  enable_jwt_auth: boolean  # allow proxy admin to auth in via jwt tokens with 'litellm_proxy_admin' in claims
-  enforce_user_param: boolean  # requires all openai endpoint requests to have a 'user' param
-  allowed_routes: ["route1", "route2"]  # list of allowed proxy API routes - a user can access. (currently JWT-Auth only)
-  key_management_system: google_kms  # either google_kms or azure_kms
-  master_key: string
-  database_url: string
-  database_connection_pool_limit: 0  # default 100
-  database_connection_timeout: 0  # default 60s
-  custom_auth: string
-  max_parallel_requests: 0  # the max parallel requests allowed per deployment 
-  global_max_parallel_requests: 0  # the max parallel requests allowed on the proxy all up 
-  infer_model_from_keys: true
-  background_health_checks: true
-  health_check_interval: 300
-  alerting: ["slack", "email"]
-  alerting_threshold: 0
-  use_client_credentials_pass_through_routes: boolean  # use client credentials for all pass through routes like "/vertex-ai", /bedrock/. When this is True Virtual Key auth will not be applied on these endpoints
-```
-
-### Router Settings
-
-```yaml
-router_settings:
-  routing_strategy: usage-based-routing-v2 # Literal["simple-shuffle", "least-busy", "usage-based-routing","latency-based-routing"], default="simple-shuffle"
-  redis_host: <your-redis-host>           # string
-  redis_password: <your-redis-password>   # string
-  redis_port: <your-redis-port>           # string
-  enable_pre_call_check: true             # bool - Before call is made check if a call is within model context window 
-  allowed_fails: 3 # cooldown model if it fails > 1 call in a minute. 
-  cooldown_time: 30 # (in seconds) how long to cooldown model if fails/min > allowed_fails
-  disable_cooldowns: True                  # bool - Disable cooldowns for all models 
-  retry_policy: {                          # Dict[str, int]: retry policy for different types of exceptions
-    "AuthenticationErrorRetries": 3,
-    "TimeoutErrorRetries": 3,
-    "RateLimitErrorRetries": 3,
-    "ContentPolicyViolationErrorRetries": 4,
-    "InternalServerErrorRetries": 4
-  }
-  allowed_fails_policy: {
-    "BadRequestErrorAllowedFails": 1000, # Allow 1000 BadRequestErrors before cooling down a deployment
-    "AuthenticationErrorAllowedFails": 10, # int 
-    "TimeoutErrorAllowedFails": 12, # int 
-    "RateLimitErrorAllowedFails": 10000, # int 
-    "ContentPolicyViolationErrorAllowedFails": 15, # int 
-    "InternalServerErrorAllowedFails": 20, # int 
-  }
-  content_policy_fallbacks=[{"claude-2": ["my-fallback-model"]}] # List[Dict[str, List[str]]]: Fallback model for content policy violations
-  fallbacks=[{"claude-2": ["my-fallback-model"]}] # List[Dict[str, List[str]]]: Fallback model for all errors
-```
-
 
 ## Extras
 
@@ -681,15 +593,25 @@ NO_DOCS="True"
 
 in your environment, and restart the proxy. 
 
+### Disable Redoc
+
+To disable the Redoc docs (defaults to `<your-proxy-url>/redoc`), set 
+
+```env
+NO_REDOC="True"
+```
+
+in your environment, and restart the proxy. 
+
 ### Use CONFIG_FILE_PATH for proxy (Easier Azure container deployment)
 
 1. Setup config.yaml
 
 ```yaml
 model_list:
-  - model_name: gpt-3.5-turbo
+  - model_name: gpt-4o
     litellm_params:
-      model: gpt-3.5-turbo
+      model: gpt-4o
       api_key: os.environ/OPENAI_API_KEY
 ```
 
@@ -708,3 +630,53 @@ $ litellm
 ```
 
 
+### Providing LiteLLM config.yaml file as a s3, GCS Bucket Object/url
+
+Use this if you cannot mount a config file on your deployment service (example - AWS Fargate, Railway etc)
+
+LiteLLM Proxy will read your config.yaml from an s3 Bucket or GCS Bucket 
+
+<Tabs>
+<TabItem value="gcs" label="GCS Bucket">
+
+Set the following .env vars 
+```shell
+LITELLM_CONFIG_BUCKET_TYPE = "gcs"                              # set this to "gcs"         
+LITELLM_CONFIG_BUCKET_NAME = "litellm-proxy"                    # your bucket name on GCS
+LITELLM_CONFIG_BUCKET_OBJECT_KEY = "proxy_config.yaml"         # object key on GCS
+```
+
+Start litellm proxy with these env vars - litellm will read your config from GCS 
+
+```shell
+docker run --name litellm-proxy \
+   -e DATABASE_URL=<database_url> \
+   -e LITELLM_CONFIG_BUCKET_NAME=<bucket_name> \
+   -e LITELLM_CONFIG_BUCKET_OBJECT_KEY="<object_key>> \
+   -e LITELLM_CONFIG_BUCKET_TYPE="gcs" \
+   -p 4000:4000 \
+   ghcr.io/berriai/litellm-database:main-latest --detailed_debug
+```
+
+</TabItem>
+
+<TabItem value="s3" label="s3">
+
+Set the following .env vars 
+```shell
+LITELLM_CONFIG_BUCKET_NAME = "litellm-proxy"                    # your bucket name on s3 
+LITELLM_CONFIG_BUCKET_OBJECT_KEY = "litellm_proxy_config.yaml"  # object key on s3
+```
+
+Start litellm proxy with these env vars - litellm will read your config from s3 
+
+```shell
+docker run --name litellm-proxy \
+   -e DATABASE_URL=<database_url> \
+   -e LITELLM_CONFIG_BUCKET_NAME=<bucket_name> \
+   -e LITELLM_CONFIG_BUCKET_OBJECT_KEY="<object_key>> \
+   -p 4000:4000 \
+   ghcr.io/berriai/litellm-database:main-latest
+```
+</TabItem>
+</Tabs>

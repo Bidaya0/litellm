@@ -5,36 +5,31 @@
 # +-------------------------------------------------------------+
 #  Thank you users! We ❤️ you! - Krrish & Ishaan
 
-import sys
 import os
+import sys
 
 sys.path.insert(
     0, os.path.abspath("../..")
 )  # Adds the parent directory to the system path
-from typing import Optional, Literal, Union, Any
-import litellm, traceback, sys, uuid
-from litellm.caching import DualCache
-from litellm.proxy._types import UserAPIKeyAuth
-from litellm.integrations.custom_guardrail import CustomGuardrail
+import json
+import sys
+from typing import Any, List, Literal, Optional
+
 from fastapi import HTTPException
+
+import litellm
 from litellm._logging import verbose_proxy_logger
-from litellm.proxy.guardrails.guardrail_helpers import should_proceed_based_on_metadata
+from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm.litellm_core_utils.logging_utils import (
     convert_litellm_response_object_to_str,
 )
-from typing import List
-from datetime import datetime
-import aiohttp, asyncio
-from litellm._logging import verbose_proxy_logger
 from litellm.llms.custom_httpx.http_handler import (
     get_async_httpx_client,
     httpxSpecialProvider,
 )
-import httpx
-import json
+from litellm.proxy._types import UserAPIKeyAuth
+from litellm.proxy.guardrails.guardrail_helpers import should_proceed_based_on_metadata
 from litellm.types.guardrails import GuardrailEventHooks
-
-litellm.set_verbose = True
 
 GUARDRAIL_NAME = "aporia"
 
@@ -48,8 +43,6 @@ class AporiaGuardrail(CustomGuardrail):
         )
         self.aporia_api_key = api_key or os.environ["APORIO_API_KEY"]
         self.aporia_api_base = api_base or os.environ["APORIO_API_BASE"]
-        self.event_hook: GuardrailEventHooks
-
         super().__init__(**kwargs)
 
     #### CALL HOOKS - proxy only ####
@@ -149,7 +142,6 @@ class AporiaGuardrail(CustomGuardrail):
         from litellm.proxy.common_utils.callback_utils import (
             add_guardrail_to_applied_guardrails_header,
         )
-        from litellm.types.guardrails import GuardrailEventHooks
 
         """
         Use this for the post call moderation with Guardrails
@@ -170,7 +162,7 @@ class AporiaGuardrail(CustomGuardrail):
 
         pass
 
-    async def async_moderation_hook(  ### 👈 KEY CHANGE ###
+    async def async_moderation_hook(
         self,
         data: dict,
         user_api_key_dict: UserAPIKeyAuth,
@@ -180,12 +172,13 @@ class AporiaGuardrail(CustomGuardrail):
             "image_generation",
             "moderation",
             "audio_transcription",
+            "responses",
+            "mcp_call",
         ],
     ):
         from litellm.proxy.common_utils.callback_utils import (
             add_guardrail_to_applied_guardrails_header,
         )
-        from litellm.types.guardrails import GuardrailEventHooks
 
         event_type: GuardrailEventHooks = GuardrailEventHooks.during_call
         if self.should_run_guardrail(data=data, event_type=event_type) is not True:

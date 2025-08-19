@@ -1,66 +1,32 @@
+import Image from '@theme/IdealImage';
+
 # Enterprise
 For companies that need SSO, user management and professional support for LiteLLM Proxy
 
 :::info
-Interested in Enterprise? Schedule a meeting with us here 👉
-[Talk to founders](https://calendly.com/d/4mp-gd3-k5k/litellm-1-1-onboarding-chat)
-
+Get free 7-day trial key [here](https://www.litellm.ai/enterprise#trial)
 :::
 
-Deploy managed LiteLLM Proxy within your VPC.
+## Enterprise Features
 
 Includes all enterprise features.
 
-[**View AWS Marketplace Listing**](https://aws.amazon.com/marketplace/pp/prodview-gdm3gswgjhgjo?sr=0-1&ref_=beagle&applicationId=AWSMPContessa)
+<Image img={require('../img/enterprise_vs_oss.png')} />
 
-[**Get early access**](https://calendly.com/d/4mp-gd3-k5k/litellm-1-1-onboarding-chat)
+[**Procurement available via AWS / Azure Marketplace**](./data_security.md#legalcompliance-faqs)
 
 
 This covers: 
-- **Enterprise Features**
-    - **Security**
-        - ✅ [SSO for Admin UI](./proxy/ui#✨-enterprise-features)
-        - ✅ [Audit Logs with retention policy](./proxy/enterprise#audit-logs)
-        - ✅ [JWT-Auth](../docs/proxy/token_auth.md)
-        - ✅ [Control available public, private routes (Restrict certain endpoints on proxy)](./proxy/enterprise#control-available-public-private-routes)
-        - ✅ [**Secret Managers** AWS Key Manager, Google Secret Manager, Azure Key](./secret)
-        - ✅ IP address‑based access control lists
-        - ✅ Track Request IP Address
-        - ✅ [Use LiteLLM keys/authentication on Pass Through Endpoints](./proxy/pass_through#✨-enterprise---use-litellm-keysauthentication-on-pass-through-endpoints)
-        - ✅ Set Max Request / File Size on Requests
-        - ✅ [Enforce Required Params for LLM Requests (ex. Reject requests missing ["metadata"]["generation_name"])](./proxy/enterprise#enforce-required-params-for-llm-requests)
-    - **Customize Logging, Guardrails, Caching per project**
-        - ✅ [Team Based Logging](./proxy/team_logging.md) - Allow each team to use their own Langfuse Project / custom callbacks
-        - ✅ [Disable Logging for a Team](./proxy/team_logging.md#disable-logging-for-a-team) - Switch off all logging for a team/project (GDPR Compliance)
-    - **Controlling Guardrails by Virtual Keys**
-    - **Spend Tracking & Data Exports**
-        - ✅ [Tracking Spend for Custom Tags](./proxy/enterprise#tracking-spend-for-custom-tags)
-        - ✅ [Exporting LLM Logs to GCS Bucket](./proxy/bucket#🪣-logging-gcs-s3-buckets)
-        - ✅ [API Endpoints to get Spend Reports per Team, API Key, Customer](./proxy/cost_tracking.md#✨-enterprise-api-endpoints-to-get-spend)
-    - **Prometheus Metrics**
-        - ✅ [Prometheus Metrics - Num Requests, failures, LLM Provider Outages](./proxy/prometheus)
-        - ✅ [`x-ratelimit-remaining-requests`, `x-ratelimit-remaining-tokens` for LLM APIs on Prometheus](./proxy/prometheus#✨-enterprise-llm-remaining-requests-and-remaining-tokens)
-    - **Custom Branding**
-        - ✅ [Custom Branding + Routes on Swagger Docs](./proxy/enterprise#swagger-docs---custom-routes--branding)
-        - ✅ [Public Model Hub](../docs/proxy/enterprise.md#public-model-hub)
-        - ✅ [Custom Email Branding](../docs/proxy/email.md#customizing-email-branding)
+- [**Enterprise Features**](./proxy/enterprise)
 - ✅ **Feature Prioritization**
 - ✅ **Custom Integrations**
-- ✅ **Professional Support - Dedicated discord + slack**
+- ✅ **Professional Support - Dedicated Slack/Teams channel**
 
 
+## Self-Hosted
 
-## Frequently Asked Questions
+Manage Yourself - you can deploy our Docker Image or build a custom image from our pip package, and manage your own infrastructure. In this case, we would give you a license key + provide support via a dedicated support channel. 
 
-### What topics does Professional support cover and what SLAs do you offer?
-
-Professional Support can assist with LLM/Provider integrations, deployment, upgrade management, and LLM Provider troubleshooting.  We can’t solve your own infrastructure-related issues but we will guide you to fix them.
-
-- 1 hour for Sev0 issues
-- 6 hours for Sev1
-- 24h for Sev2-Sev3 between 7am – 7pm PT (Monday through Saturday)
-
-**We can offer custom SLAs** based on your needs and the severity of the issue
 
 ### What’s the cost of the Self-Managed Enterprise edition?
 
@@ -75,4 +41,72 @@ You just deploy [our docker image](https://docs.litellm.ai/docs/proxy/deploy) an
 LITELLM_LICENSE="eyJ..."
 ```
 
-No data leaves your environment. 
+**No data leaves your environment.** 
+
+
+## Hosted LiteLLM Proxy
+
+LiteLLM maintains the proxy, so you can focus on your core products. 
+
+We provide a dedicated proxy for your team, and manage the infrastructure. 
+
+### **Status**: GA 
+
+Our proxy is already used in production by customers. 
+
+See our status page for [**live reliability**](https://status.litellm.ai/)
+
+### **Benefits**
+- **No Maintenance, No Infra**: We'll maintain the proxy, and spin up any additional infrastructure (e.g.: separate server for spend logs) to make sure you can load balance + track spend across multiple LLM projects. 
+- **Reliable**: Our hosted proxy is tested on 1k requests per second, making it reliable for high load.
+- **Secure**: LiteLLM is SOC-2 Type 2 and ISO 27001 certified, to make sure your data is as secure as possible.
+
+### Supported data regions for LiteLLM Cloud
+
+You can find [supported data regions litellm here](../docs/data_security#supported-data-regions-for-litellm-cloud)
+
+
+## Frequently Asked Questions
+
+### SLA's + Professional Support
+
+Professional Support can assist with LLM/Provider integrations, deployment, upgrade management, and LLM Provider troubleshooting.  We can’t solve your own infrastructure-related issues but we will guide you to fix them.
+
+- 1 hour for Sev0 issues - 100% production traffic is failing
+- 6 hours for Sev1 - < 100% production traffic is failing
+- 24h for Sev2-Sev3 between 7am – 7pm PT (Monday through Saturday) - setup issues e.g. Redis working on our end, but not on your infrastructure.
+- 72h SLA for patching vulnerabilities in the software. 
+
+**We can offer custom SLAs** based on your needs and the severity of the issue
+
+## Data Security / Legal / Compliance FAQs
+
+[Data Security / Legal / Compliance FAQs](./data_security.md)
+
+
+### Pricing
+
+Pricing is based on usage. We can figure out a price that works for your team, on the call. 
+
+[**Contact Us to learn more**](https://calendly.com/d/4mp-gd3-k5k/litellm-1-1-onboarding-chat)
+
+
+
+## **Screenshots**
+
+### 1. Create keys
+
+<Image img={require('../img/litellm_hosted_ui_create_key.png')} />
+
+### 2. Add Models
+
+<Image img={require('../img/litellm_hosted_ui_add_models.png')}/>
+
+### 3. Track spend 
+
+<Image img={require('../img/litellm_hosted_usage_dashboard.png')} />
+
+
+### 4. Configure load balancing 
+
+<Image img={require('../img/litellm_hosted_ui_router.png')} />
